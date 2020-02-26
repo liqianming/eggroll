@@ -19,7 +19,8 @@ from eggroll.roll_paillier_tensor.test.test_assets import get_debug_rs_context, 
 
 from eggroll.roll_paillier_tensor.test.test_assets import test_data_dir
 from eggroll.roll_pair.roll_pair import RollPair
-from eggroll.roll_pair.test.roll_pair_test_assets import get_standalone_context, get_debug_test_context
+from eggroll.roll_pair.test.roll_pair_test_assets import get_standalone_context, get_debug_test_context, \
+    get_cluster_context
 from datetime import datetime
 import os
 import time
@@ -27,6 +28,8 @@ import time
 host_parties = [('host', host_options["self_party_id"])]
 guest_parties = [('guest', guest_options["self_party_id"])]
 max_iter = 10
+async_gen_obf = False
+
 
 """
 run steps:
@@ -72,6 +75,8 @@ class TestLR2SitesBase(unittest.TestCase):
             os.remove(self.job_id_path)
 
     def testGenObfuscator(self):
+        if not async_gen_obf:
+            return
         pub, priv = self.init_paillier_key()
         self.rptc.start_gen_obfuscator(pub_key=pub)
         time.sleep(100000)
@@ -80,7 +85,8 @@ class TestLR2SitesBase(unittest.TestCase):
         rp_ctx = self.rpc
         rs_ctx = self.rsc_guest
         pub, priv = self.init_paillier_key()
-        self.rptc.set_obfuscator()
+        if async_gen_obf:
+            self.rptc.set_obfuscator()
         rs_ctx.load(name="roll_pair_name.test_key_pair", tag="pub_priv_key").push((pub, priv), host_parties)
         data = np.loadtxt(test_data_dir + "breast_b_mini.csv", delimiter=",", skiprows=1)
         G = data[:, 2:]
@@ -140,7 +146,8 @@ class TestLR2SitesBase(unittest.TestCase):
         H = data[:, 1:]
         rp_x_H = rp_ctx.load(self.job_id, 'H')
         pub, priv = rs_ctx.load(name="roll_pair_name.test_key_pair", tag="pub_priv_key").pull(guest_parties)[0].result()
-        self.rptc.set_obfuscator()
+        if async_gen_obf:
+            self.rptc.set_obfuscator()
         rp_x_H.put('1', NumpyTensor(H, pub))
         X_H = self.rptc.from_roll_pair(rp_x_H)
         w_H = NumpyTensor(np.ones((20, 1)), pub)
@@ -195,7 +202,52 @@ class TestLR2SitesBase(unittest.TestCase):
 class TestLR2SitesStandalone(TestLR2SitesBase):
     def setUp(self) -> None:
         self.init_job()
-        self.rpc = get_standalone_context()
+        self.rpc = get_standalone_context(session_id=self.job_id)
         self.rsc_guest = get_debug_rs_context(self.rpc, self.job_id, guest_options)
         self.rsc_host = get_debug_rs_context(self.rpc, self.job_id, host_options)
         self.rptc = RptContext(self.rpc)
+
+    def testGenObfuscator(self):
+        super().testGenObfuscator()
+
+    def testLRGuest(self):
+        super().testLRGuest()
+
+    def testLRHost(self):
+        super().testLRHost()
+
+
+class TestLR2SitesClusterDebug(TestLR2SitesBase):
+    def setUp(self) -> None:
+        self.init_job()
+        self.rpc = get_debug_test_context(False)
+        self.rsc_guest = get_debug_rs_context(self.rpc, self.job_id, guest_options)
+        self.rsc_host = get_debug_rs_context(self.rpc, self.job_id, host_options)
+        self.rptc = RptContext(self.rpc)
+
+    def testGenObfuscator(self):
+        super().testGenObfuscator()
+
+    def testLRGuest(self):
+        super().testLRGuest()
+
+    def testLRHost(self):
+        super().testLRHost()
+
+
+class TestLR2SitesCluster(TestLR2SitesBase):
+    def setUp(self) -> None:
+        self.init_job()
+        self.rpc = get_cluster_context(session_id=self.job_id)
+        self.rsc_guest = get_debug_rs_context(self.rpc, self.job_id, guest_options)
+        self.rsc_host = get_debug_rs_context(self.rpc, self.job_id, host_options)
+        self.rptc = RptContext(self.rpc)
+
+    def testGenObfuscator(self):
+        super().testGenObfuscator()
+
+    def testLRGuest(self):
+        super().testLRGuest()
+
+    def testLRHost(self):
+        super().testLRHost()

@@ -64,20 +64,20 @@ def get_debug_test_context(is_standalone=False, manager_port=4670, egg_port=2000
     return context
 
 
-def get_standalone_context():
+def get_standalone_context(session_id=None):
     options = {}
     options[SessionConfKeys.CONFKEY_SESSION_DEPLOY_MODE] = DeployModes.STANDALONE
 
-    session = ErSession(options=options)
+    session = ErSession(options=options, session_id=session_id)
     print(session.get_session_id())
     context = RollPairContext(session)
 
     return context
 
-def get_cluster_context(options=None):
+def get_cluster_context(options=None, session_id=None):
     if options is None:
         options = {}
-    session = ErSession(options=options)
+    session = ErSession(options=options, session_id=session_id)
     print(session.get_session_id())
     context = RollPairContext(session)
     return context
