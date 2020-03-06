@@ -32,6 +32,8 @@ else:
 class Ciper(object):
     def genkey(self):
         return CPUEngine.keygen()
+    def genkey_stable(self):
+        return CPUEngine.keygen_stable()
 
 class Tensor(object):
     def __init__(self):
@@ -122,8 +124,6 @@ class NumpyTensor(Tensor):
         if isinstance(other, PaillierTensor):
             mng = self._engine.num2Mng(self._ndarray, self._pub)
             return PaillierTensor(self._engine.add(mng, other._store, self._pub), self._pub)
-
-
 
     def __sub__(self, other):
         if isinstance(other, NumpyTensor):
