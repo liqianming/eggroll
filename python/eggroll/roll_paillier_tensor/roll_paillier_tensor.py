@@ -84,8 +84,8 @@ class RptContext(object):
         # TODO:0: engine_type
         return self.from_roll_pair(self.rp_ctx.load(namespace, name))
 
-    def from_roll_pair(self, rp):
-        return RollPaillierTensor(rp, self)
+    def from_roll_pair(self, rp, type='cpu'):
+        return RollPaillierTensor(rp, self, type)
 
 
 class NumpyTensor(Tensor):

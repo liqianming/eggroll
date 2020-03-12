@@ -81,7 +81,7 @@ class TestLR(unittest.TestCase):
         rp_x_Y = rpc.load('egr', 'rp_x_Y')
 
 
-        pub, priv = Ciper().genkey()
+        pub, priv = Ciper().genkey_stable()
 
         rp_x_G.put('1', NumpyTensor(G, pub))
         rp_x_H.put('1', NumpyTensor(H, pub))
@@ -91,11 +91,11 @@ class TestLR(unittest.TestCase):
         print("111111111111111111111111111111")
 
         #X_G = self.rptc.from_roll_pair(rp_x_G)
-        # X_H = self.rptc.from_roll_pair(rp_x_H)
-        # X_Y = self.rptc.from_roll_pair(rp_x_Y)
-        #
-        # w_H = NumpyTensor(np.ones((20, 1)), pub)
-        # w_G = NumpyTensor(np.ones((10, 1)), pub)
+        X_H = self.rptc.from_roll_pair(rp_x_H, 'gpu')
+        X_Y = self.rptc.from_roll_pair(rp_x_Y, 'gpu')
+
+        w_H = NumpyTensor(np.ones((20, 1)), pub, 'gpu')
+        w_G = NumpyTensor(np.ones((10, 1)), pub, 'gpu')
 
         #X_H._store.map_values(lambda v: print("123", v._ndarry))
 
@@ -103,31 +103,31 @@ class TestLR(unittest.TestCase):
         itr = 0
         pre_loss_A = None
         #
-        # while itr < max_iter:
-        #     fw_H1 = X_H @ w_H
-        #     fw_H2 = X_H @ w_H
-        #     enc_fw_H = fw_H1.encrypt()
-        #     enc_fw_H.out(priv, "123")
-        #
-        #     enc_fw_square_H = (fw_H1 * fw_H2).encrypt()
-        #
-        #     fw_G1 = X_G @ w_G
-        #     fw_G2 = X_G @ w_G
-        #     enc_fw_G = fw_G1.encrypt()
-        #     enc_fw_square_G = (fw_G1 * fw_G2).encrypt()
-        #
-        #     enc_agg_wx_G = enc_fw_G + enc_fw_H
-        #
-        #     enc_agg_wx_square_G = enc_fw_square_G + enc_fw_square_H + fw_G1 * enc_fw_H * 2
-        #
-        #     enc_fore_grad_G = 0.25 * enc_agg_wx_G - 0.5 * X_Y
-        #
-        #     enc_grad_G = (X_G * enc_fore_grad_G).mean()
-        #     enc_grad_H = (X_H * enc_fore_grad_G).mean()
-        #
-        #
-        #     enc_grad_G.out(priv, '123')
-        #
+        while itr < max_iter:
+            fw_H1 = X_H @ w_H
+            fw_H2 = X_H @ w_H
+            enc_fw_H = fw_H1.encrypt()
+            enc_fw_H.out(priv, "123")
+
+            enc_fw_square_H = (fw_H1 * fw_H2).encrypt()
+
+            fw_G1 = X_G @ w_G
+            fw_G2 = X_G @ w_G
+            enc_fw_G = fw_G1.encrypt()
+            enc_fw_square_G = (fw_G1 * fw_G2).encrypt()
+
+            enc_agg_wx_G = enc_fw_G + enc_fw_H
+
+            enc_agg_wx_square_G = enc_fw_square_G + enc_fw_square_H + fw_G1 * enc_fw_H * 2
+
+            enc_fore_grad_G = 0.25 * enc_agg_wx_G - 0.5 * X_Y
+            #
+            # enc_grad_G = (X_G * enc_fore_grad_G).mean()
+            # enc_grad_H = (X_H * enc_fore_grad_G).mean()
+            #
+            #
+            # enc_grad_G.out(priv, '123')
+
         #     grad_A = enc_grad_G.hstack(enc_grad_H)
         #
         #     learning_rate *= 0.999
@@ -152,7 +152,7 @@ class TestLR(unittest.TestCase):
         #     pre_loss_A = loss_A
         #     print("pre_loss_A:", pre_loss_A)
         #
-        #     itr += 1
+            itr += 1
 
     def test_lr_gpu(self):
         #base obj
