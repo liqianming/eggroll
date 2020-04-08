@@ -16,10 +16,10 @@
 
 
 import configparser
-import json
 import os
 
 import eggroll.roll_pair.test.roll_pair_test_assets as rpta
+from eggroll.core.conf_keys import RollSiteConfKeys
 from eggroll.core.constants import StoreTypes
 from eggroll.core.meta_model import ErStore, ErStoreLocator, ErEndpoint
 from eggroll.roll_site.roll_site import RollSiteContext
@@ -40,18 +40,20 @@ default_props_file = f"{EGGROLL_HOME}/conf/eggroll.properties"
 
 
 def get_option(role, conf_file=default_props_file):
+    print(f'conf file: {conf_file}')
     configs = configparser.ConfigParser()
 
     configs.read(conf_file)
     eggroll_configs = configs['eggroll']
 
     options = {}
-    party_id = eggroll_configs['partyId']
+    party_id = eggroll_configs[RollSiteConfKeys.EGGROLL_ROLLSITE_PARTY_ID.key]
     options['self_party_id'] = party_id
     options['self_role'] = role
 
     options['proxy_endpoint'] = \
-        ErEndpoint(host=eggroll_configs['ip'], port=int(eggroll_configs["port"]))
+        ErEndpoint(host=eggroll_configs[RollSiteConfKeys.EGGROLL_ROLLSITE_HOST.key],
+                   port=int(eggroll_configs[RollSiteConfKeys.EGGROLL_ROLLSITE_PORT.key]))
 
     return options
 
@@ -105,12 +107,17 @@ def get_standalone_context(role, props_file=default_props_file):
     return rs_context
 
 
-def get_cluster_context(role, options: dict = None, props_file=default_props_file):
+def get_cluster_context(role, options: dict = None, props_file=default_props_file, party_id=None):
     if options is None:
         options = {}
     rp_context = rpta.get_cluster_context(options=options)
+
+    rs_options = get_option(role, props_file)
+
+    if party_id:
+        rs_options['self_party_id'] = str(party_id)
     rs_context = RollSiteContext(roll_site_session_id, rp_ctx=rp_context,
-                                 options=get_option(role, props_file))
+                                 options=rs_options)
 
     return rs_context
 

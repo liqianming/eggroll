@@ -139,8 +139,8 @@ class TestRollPairBase(unittest.TestCase):
         print(data1.get_partitions())
         h2 = data1.aggregate(zero_value=1, seq_op=mul, comb_op=add)
         print("aggregate result: ", h2)
-        #self.assertEqual(h2, 25)
-        self.assertEqual(h2, 720)
+        self.assertEqual(h2, 25)
+        #self.assertEqual(h2, 720)
 
     def test_join_self(self):
         options = get_default_options()
@@ -217,6 +217,7 @@ class TestRollPairBase(unittest.TestCase):
 
     def test_map_partitions(self):
         options = get_default_options()
+        options['total_partitions'] = 12
         data = [(str(i), i) for i in range(10)]
         rp = self.ctx.load("ns1", "test_map_partitions", options=options).put_all(data, options={"include_key": True})
         def func(iter):
@@ -226,8 +227,10 @@ class TestRollPairBase(unittest.TestCase):
                 ret.append((f"{k}_{v}_1", v ** 3))
             return ret
         table = rp.map_partitions(func)
-        print(list(rp.map_partitions(func).get_all()))
-        self.assertEqual(get_value(table), [('0_0_0', 0), ('0_0_1', 0), ('1_1_0', 1), ('1_1_1', 1), ('2_2_0', 4), ('2_2_1', 8),
+        self.assertEqual(table.get("6_6_0"), 36)
+        self.assertEqual(table.get("0_0_1"), 0)
+        self.assertEqual(table.get("1_1_0"), 1)
+        self.assertEqual(sorted(table.get_all(), key=lambda x: x[0]), [('0_0_0', 0), ('0_0_1', 0), ('1_1_0', 1), ('1_1_1', 1), ('2_2_0', 4), ('2_2_1', 8),
                                             ('3_3_0', 9), ('3_3_1', 27), ('4_4_0', 16), ('4_4_1', 64), ('5_5_0', 25),
                                             ('5_5_1', 125), ('6_6_0', 36), ('6_6_1', 216), ('7_7_0', 49), ('7_7_1', 343),
                                             ('8_8_0', 64), ('8_8_1', 512), ('9_9_0', 81), ('9_9_1', 729)])
@@ -276,10 +279,11 @@ class TestRollPairBase(unittest.TestCase):
 
     def test_join(self):
         options = get_default_options()
-        left_rp = self.ctx.load("ns1", "testJoinLeft", options=options).put_all([('a', 1), ('b', 4)], options={"include_key": True})
-        right_rp = self.ctx.load("ns1", "testJoinRight", options=options).put_all([('a', 2), ('c', 4)], options={"include_key": True})
+        left_rp = self.ctx.load("ns1", "testJoinLeft", options=options).put_all([('a', 1), ('b', 4), ('d', 6), ('e', 0)], options={"include_key": True})
+        right_rp = self.ctx.load("ns1", "testJoinRight", options=options).put_all([('a', 2), ('c', 4), ('d', 1), ('f', 0), ('g', 1)], options={"include_key": True})
         print(list(left_rp.join(right_rp, lambda v1, v2: v1 + v2).get_all()))
-        self.assertEqual(get_value(left_rp.join(right_rp, lambda v1, v2: v1 + v2)), [('a', 3)])
+        self.assertEqual(get_value(left_rp.join(right_rp, lambda v1, v2: v1 + v2)), [('a', 3), ('d', 7)])
+        self.assertEqual(get_value(right_rp.join(left_rp, lambda v1, v2: v1 + v2)), [('a', 3), ('d', 7)])
 
     def test_sample(self):
         options = get_default_options()
@@ -294,6 +298,18 @@ class TestRollPairBase(unittest.TestCase):
         left_rp = self.ctx.load("namespace20201", "testSubtractByKeyLeft202013", options=options).put_all(range(10), options=options)
         right_rp = self.ctx.load("namespace2020131", "testSubtractByKeyRight202013", options=options).put_all(range(5), options=options)
         self.assertEqual(list(left_rp.subtract_by_key(right_rp).get_all()), [(5, 5), (6, 6), (7, 7), (8, 8), (9, 9)])
+
+    @staticmethod
+    def gen_data(self):
+        ret = []
+        for i in range(1, 2000000):
+            ret.append(i)
+        return ret
+
+    @staticmethod
+    def gen_kv(self):
+        for i in range(1, 2000000):
+            yield [i, i]
 
     def test_union(self):
         options = get_default_options()
@@ -405,6 +421,19 @@ class TestRollPairClusterEverySession(TestRollPairBase):
         opts.update(kwargs)
         return opts
 
+    def test_get_and_stop_and_kill_session(self):
+        session = self.ctx.get_session()
+        id = session.get_session_id()
+
+        session.stop()
+
+        from eggroll.core.session import ErSession
+        dead_session = ErSession(id)
+        dead_session.stop()
+
+        dead_session = ErSession(id)
+        dead_session.kill()
+
     def tearDown(self) -> None:
         self.ctx.get_session().stop()
 
@@ -415,6 +444,7 @@ class TestRollPairCluster(TestRollPairBase):
     @classmethod
     def setUpClass(cls) -> None:
         opts = {"eggroll.session.processors.per.node": "10"}
+        #opts = {}
         cls.ctx = get_cluster_context(options=opts)
 
     def setUp(self):
