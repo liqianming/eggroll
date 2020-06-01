@@ -73,7 +73,8 @@ class RocksdbAdapter(PairAdapter):
         with RocksdbAdapter.env_lock:
             if hasattr(self, 'db'):
                 count = RocksdbAdapter.count_dict[self.path]
-                if not count or count - 1 <= 0:
+                if not count or count - 1 <= 0 and self.path in RocksdbAdapter.env_dict \
+                        and self.path in RocksdbAdapter.count_dict:
                     del RocksdbAdapter.env_dict[self.path]
                     del RocksdbAdapter.count_dict[self.path]
                     del self.db
