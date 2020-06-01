@@ -61,7 +61,8 @@ class RocksdbAdapter(PairAdapter):
         self.close()
 
     def __del__(self):
-        self.close()
+        # self.close()
+        pass
 
     def get(self, key):
         return self.db.get(key)
