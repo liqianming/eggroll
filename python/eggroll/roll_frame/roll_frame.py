@@ -12,9 +12,11 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
+import operator
 import os
 import uuid
 from concurrent.futures import wait, FIRST_EXCEPTION
+from queue import Queue
 from threading import Thread
 
 from eggroll.core.aspects import _method_profile_logger
@@ -37,7 +39,9 @@ from eggroll.roll_pair.transfer_pair import TransferPair, BatchBroker
 from eggroll.roll_pair.utils.gc_utils import GcRecorder
 from eggroll.roll_pair.utils.pair_utils import partitioner
 from eggroll.utils.log_utils import get_logger
-
+import pandas as pd
+import numpy as np
+import pyarrow as pa
 L = get_logger()
 
 
@@ -217,6 +221,31 @@ class RollFrame(object):
 
         return results
 
+    def put_all(self, frame):
+        def _inner_put_all(parts):
+            part = parts[0]
+            with _create_store_adapter(part) as input_store:
+                # TODO: merge batch
+                input_store.write_all(TransferFrame.get(tag))
+        if isinstance(frame, pd.DataFrame):
+            for batch in frame.split(by_column_value=True):
+                route_to_egg = xx
+                get_egg(route_to_egg).send(batch)
+        else:
+            raise NotImplementedError("doing")
+        return self.with_stores(_inner_put_all)
+
+    def shuffle(self):
+        def _inner_shuffle(parts):
+            in_part, out_part = parts[0], parts[1]
+            with _create_store_adapter(in_part) as in_store, _create_store_adapter(out_part) as out_store:
+                # TODO: merge batch
+                input_store.write_all(TransferFrame.get(tag))
+                for frame in in_store.read_all():
+                    for batch in frame.split(by_column_value=True):
+                        route_to_egg = xx
+                        get_egg(route_to_egg).send(batch)
+        return self.with_stores(_inner_shuffle)
 
     @_method_profile_logger
     def count(self):
@@ -285,14 +314,32 @@ class RollFrame(object):
             args=args,
             output_types=[ErPair],
             command_uri=CommandURI(self.RUN_TASK_URI))
+        if merge_func is not None:
+            results = Queue()
+            for fut in futures:
+                fut.add_done_callback(lambda x: results.put(x.reuslt()))
+            return merge_func(results.get() for _ in range(len(futures)))
+        else:
+            result = list()
+            for future in futures:
+                ret_pair = future.result()[0]
+                result.append((self.functor_serdes.deserialize(ret_pair._key),
+                               self.functor_serdes.deserialize(ret_pair._value)))
+            return result
 
-        result = list()
-        for future in futures:
-            ret_pair = future.result()[0]
-            result.append((self.functor_serdes.deserialize(ret_pair._key),
-                           self.functor_serdes.deserialize(ret_pair._value)))
-        return result
 
+class RollTensor:
+    def __init__(self):
+        self.rf = None
 
-class RollTensor():
-    pass
+    def _bin_op(self, other, op):
+        def _inner_bin_func(parts):
+            in_part, out_part = parts[0], parts[1]
+            with _create_store_adapter(in_part) as in_store, _create_store_adapter(out_part) as out_store:
+                x = x_store... numpy
+                y = y_store.. numpy
+                return op(x, y)
+        self.rf.with_store(other.rf.store, func=xx)
+
+    def _add(self, other):
+        return self._bin_op(other, operator.add)
