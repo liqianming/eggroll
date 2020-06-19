@@ -107,8 +107,7 @@ class TransferService(object):
             except BrokerClosed as e:
                 break
             except Exception as e:
-                #todo:1: remove print here
-                print(e)
+                raise e
 
 
 class GrpcTransferServicer(transfer_pb2_grpc.TransferServiceServicer):

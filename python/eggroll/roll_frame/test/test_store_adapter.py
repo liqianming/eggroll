@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from eggroll.roll_frame import FrameBatch, TensorBatch
+from eggroll.roll_frame.frame_store import create_frame_adapter
 
 
 class TestStoreAdapter(unittest.TestCase):
@@ -51,3 +52,28 @@ class TestStoreAdapter(unittest.TestCase):
         print(fr._data)
         t1 = TensorBatch.from_numpy(np.zeros([3,4]))
         print(TensorBatch.from_frame(t1.to_frame())._data)
+
+    def test_pandas_dataframe_rw(self):
+        df1 = pd.DataFrame.from_dict({"f_int": [1, 2], "f_double": [None, 2.0], "f_str": ["str1", None], "f_none": [None, None]})
+        df2 = pd.DataFrame.from_dict({"f_int": [None, 2, None], "f_double": [1.0, 2.0, 3.0], "f_str": ["str1", None, "str3"], "f_none": [None, None, None]})
+        df3 = pd.DataFrame.from_dict({"f_int": [1, 2, 3], "f_double": [1.0, 2.0, 3.0], "f_str": ["str1", None, "str3"], "f_none": [None, None, None]})
+        options = {}
+        options['path'] = "/tmp/test_py_rf/pandas_df"
+        with create_frame_adapter(options) as adapter:
+            adapter.write_all([df1, df3])
+
+        with create_frame_adapter(options) as adapter:
+            fbs = adapter.read_all()
+            for fb in fbs:
+                data = fb.to_pandas()
+                print(data)
+
+    def test_read(self):
+        options = {}
+        options['path'] = '/Users/max-webank/git/eggroll-py-rf/data/ROLL_FRAME_FILE/test_rf_ns/test_rf_name_20200619.094320.566/0'
+        with create_frame_adapter(options) as adapter:
+            fbs = adapter.read_all()
+            for fb in fbs:
+                data = fb.to_pandas()
+                print(data)
+

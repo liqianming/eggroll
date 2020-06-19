@@ -60,10 +60,15 @@ class EggFrame(object):
     def __partitioner(self, hash_func, total_partitions):
         return lambda k: hash_func(k) % total_partitions
 
-
     @_exception_logger
     def run_task(self, task: ErTask):
-        print("ok ")
+        L.info(f"run task called for task._id={task._id}")
+        f = self.functor_serdes.deserialize(task._job._functors[0]._body)
+        f_result = f(task)
+
+        result = ErPair(key=self.functor_serdes.serialize(task._id),
+                        value=self.functor_serdes.serialize(f_result))
+        return result
 
 
 def serve(args):

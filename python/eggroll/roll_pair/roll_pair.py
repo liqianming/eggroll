@@ -473,10 +473,10 @@ class RollPair(object):
             return self.value_serdes.serialize(v) if use_serialize else string_to_bytes(v)
 
     def _run_job(self,
-            job: ErJob,
-            output_types: list = None,
-            command_uri: CommandURI = RUN_TASK_URI,
-            create_output_if_missing: bool = True):
+                 job: ErJob,
+                 output_types: list = None,
+                 command_uri: CommandURI = RUN_TASK_URI,
+                 create_output_if_missing: bool = True):
         futures = self.ctx.get_session().submit_job(
                 job=job,
                 output_types=output_types,

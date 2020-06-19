@@ -33,7 +33,6 @@ from eggroll.core.serdes import cloudpickle
 from eggroll.core.session import ErSession
 from eggroll.core.utils import generate_job_id, generate_task_id
 from eggroll.core.utils import string_to_bytes, hash_code
-from eggroll.roll_frame.frame_store import FrameStore
 from eggroll.roll_pair import create_serdes
 from eggroll.roll_pair.transfer_pair import TransferPair, BatchBroker
 from eggroll.roll_pair.utils.gc_utils import GcRecorder
@@ -42,6 +41,13 @@ from eggroll.utils.log_utils import get_logger
 import pandas as pd
 import numpy as np
 import pyarrow as pa
+from eggroll.roll_frame import FrameBatch
+from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
+from eggroll.roll_frame.transfer_frame import TransferFrame
+from eggroll.core.transfer.transfer_service import TransferClient, TransferService
+from eggroll.core.utils import generate_job_id, generate_task_id
+
+
 L = get_logger()
 
 
@@ -87,15 +93,6 @@ class RollFrameContext(object):
         store_options.update(options)
         final_options = store_options.copy()
 
-        # TODO:1: tostring in er model
-        if 'create_if_missing' in final_options:
-            del final_options['create_if_missing']
-        if 'total_partitions' in final_options:
-            del final_options['total_partitions']
-        if 'name' in final_options:
-            del final_options['name']
-        if 'namespace' in final_options:
-            del final_options['namespace']
         # TODO:0: add 'error_if_exist, persistent / default store type'
         L.info("final_options:{}".format(final_options))
         store = ErStore(
@@ -115,7 +112,8 @@ class RollFrameContext(object):
                 raise EnvironmentError(
                     "result is None, please check whether the store:{} has been created before".format(store))
 
-        if not no_partitions_param and result._store_locator._total_partitions != 0 \
+        if False and not no_partitions_param \
+                and result._store_locator._total_partitions != 0 \
                 and total_partitions != result._store_locator._total_partitions:
             raise ValueError(f"store:{result._store_locator._name} input total_partitions:{total_partitions}, "
                              f"output total_partitions:{result._store_locator._total_partitions}, must be the same")
@@ -155,21 +153,25 @@ class RollFrameContext(object):
             pass
 
 
-def _create_store_adapter(er_partition, options: dict = None):
-    if options is None:
-            options = {}
-    store_locator = er_partition._store_locator
-    options['store_type'] = er_partition._store_locator._store_type
-    options['path'] = "/".join([os.environ["EGGROLL_HOME"], store_locator._store_type,
-                                store_locator._namespace, store_locator._name, str(er_partition._id)])
-    options['er_partition'] = er_partition
-    return FrameStore.init(options)
+# def _create_store_adapter(er_partition, options: dict = None):
+#     if options is None:
+#             options = {}
+#     store_locator = er_partition._store_locator
+#     options['store_type'] = er_partition._store_locator._store_type
+#     options['path'] = "/".join([os.environ["EGGROLL_HOME"], store_locator._store_type,
+#                                 store_locator._namespace, store_locator._name, str(er_partition._id)])
+#     options['er_partition'] = er_partition
+#     return FrameStore.init(options)
 
 
 class RollFrame(object):
-    EGG_FRAME_URI_PREFIX = 'v1/egg-pair'
+    EGG_FRAME_URI_PREFIX = 'v1/egg-frame'
     RUN_TASK = 'runTask'
     RUN_TASK_URI = CommandURI(f'{EGG_FRAME_URI_PREFIX}/{RUN_TASK}')
+
+    GET_ALL = 'getAll'
+    PUT_ALL = 'putAll'
+
     SERIALIZED_NONE = cloudpickle.dumps(None)
 
     def __setstate__(self, state):
@@ -178,13 +180,13 @@ class RollFrame(object):
     def __getstate__(self):
         pass
 
-    def __init__(self, er_store: ErStore, rp_ctx):
-        if not rp_ctx:
+    def __init__(self, er_store: ErStore, rf_ctx: RollFrameContext):
+        if not rf_ctx:
             raise ValueError('rp_ctx cannot be None')
         self.__store = er_store
-        self.ctx = rp_ctx
+        self.ctx = rf_ctx
         self.__command_client = CommandClient()
-        self.functor_serdes =create_serdes(SerdesTypes.CLOUD_PICKLE)
+        self.functor_serdes = create_serdes(SerdesTypes.CLOUD_PICKLE)
         self.partitioner = partitioner(hash_code, self.__store._store_locator._total_partitions)
         self.__session_id = self.ctx.session_id
         self.destroyed = False
@@ -204,142 +206,137 @@ class RollFrame(object):
     def get_store_type(self):
         return self.__store._store_locator._store_type
 
-    def _run_job(self,
-                 job: ErJob,
-                 output_types: list = None,
-                 command_uri: CommandURI = RUN_TASK_URI,
-                 create_output_if_missing: bool = True):
+    def _submit_job(self,
+                    job: ErJob,
+                    command_uri: CommandURI = RUN_TASK_URI,
+                    create_output_if_missing: bool = True):
         futures = self.ctx.get_session().submit_job(
-            job=job,
-            output_types=output_types,
-            command_uri=command_uri,
-            create_output_if_missing=create_output_if_missing)
+                job=job,
+                output_types=[ErPair],
+                command_uri=command_uri,
+                create_output_if_missing=create_output_if_missing)
 
+        return futures
+
+    def _wait_job_finished(self, futures: list):
         results = list()
         for future in futures:
             results.append(future.result())
 
         return results
 
+    def _run_job(self,
+                 job: ErJob,
+                 command_uri: CommandURI = RUN_TASK_URI,
+                 create_output_if_missing: bool = True):
+        futures = self._submit_job(
+            job=job,
+            command_uri=command_uri,
+            create_output_if_missing=create_output_if_missing)
+
+        return self._wait_job_finished(futures)
+
     def put_all(self, frame):
-        def _inner_put_all(parts):
-            part = parts[0]
-            with _create_store_adapter(part) as input_store:
-                # TODO: merge batch
-                input_store.write_all(TransferFrame.get(tag))
-        if isinstance(frame, pd.DataFrame):
-            for batch in frame.split(by_column_value=True):
-                route_to_egg = xx
-                get_egg(route_to_egg).send(batch)
-        else:
-            raise NotImplementedError("doing")
-        return self.with_stores(_inner_put_all)
+        def _func(task: ErTask):
+            tag = task._id
+            broker = TransferService.get_or_create_broker(tag, write_signals=1)
+            with create_adapter(task._outputs[0]) as output_adapter:
+                pa_serdes_context = pa.default_serialization_context()
+                for batch in broker:
+                    b = pa_serdes_context.deserialize(batch.data)
+                    output_adapter.write_all([b])
+                TransferService.remove_broker(tag)
 
-    def shuffle(self):
-        def _inner_shuffle(parts):
-            in_part, out_part = parts[0], parts[1]
-            with _create_store_adapter(in_part) as in_store, _create_store_adapter(out_part) as out_store:
-                # TODO: merge batch
-                input_store.write_all(TransferFrame.get(tag))
-                for frame in in_store.read_all():
-                    for batch in frame.split(by_column_value=True):
-                        route_to_egg = xx
-                        get_egg(route_to_egg).send(batch)
-        return self.with_stores(_inner_shuffle)
+        total_partitions = self.get_partitions()
+        transfer_client = TransferClient()
+        serialization_context = pa.default_serialization_context()
+        functor = ErFunctor(name=RollFrame.PUT_ALL, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(_func))
 
-    @_method_profile_logger
-    def count(self):
-        def _inner_count(parts):
-            part = parts[0]
-
-            with _create_store_adapter(part) as input_store:
-                count = 0
-                for batch in input_store.read_all():
-                    count += batch.to_pandas().count()[0]
-            L.debug(f"close_store_adatper:{count}")
-
-        def _count_merge(results):
-            ret = 0
-            for pair in results:
-                ret += pair[1]
-            return ret
-
-        return self.with_stores(_inner_count, merge_func=_count_merge)
-
-    # todo:1: move to command channel to utilize batch command
-    @_method_profile_logger
-    def destroy(self):
-        if len(self.ctx.get_session()._cluster_manager_client.get_store(self.get_store())._partitions) == 0:
-            L.info(f"store:{self.get_store()} has been destroyed before")
-            raise ValueError(f"store:{self.get_store()} has been destroyed before")
-        total_partitions = self.__store._store_locator._total_partitions
-
-        job = ErJob(id=generate_job_id(self.__session_id, "destroy"),
-                    name="destroy",
+        job = ErJob(id=generate_job_id(self.__session_id),
+                    name=RollFrame.PUT_ALL,
                     inputs=[self.__store],
                     outputs=[self.__store],
-                    functors=[])
+                    functors=[functor])
 
-        task_results = self._run_job(job=job, create_output_if_missing=False)
-        self.ctx.get_session()._cluster_manager_client.delete_store(self.__store)
-        self.destroyed = True
+        futures = self._submit_job(job=job)
 
-    @_method_profile_logger
-    def with_stores(self, func, others=None, options: dict=None, merge_func=None):
-        if options is None:
-            options = {}
-        tag = "withStores"
-        if others is None:
-            others = []
-        total_partitions = self.get_partitions()
-        for other in others:
-            if other.get_partitions() != total_partitions:
-                raise ValueError(f"diff partitions: expected:{total_partitions}, actual:{other.get_partitions()}")
-        job_id = generate_job_id(self.__session_id, tag=tag)
-        job = ErJob(id=job_id,
-                    name=tag,
-                    inputs=[self.ctx.populate_processor(rp.get_store()) for rp in [self] + others],
-                    functors=[ErFunctor(name=tag, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(func))],
-                    options=options)
-        args = list()
-        for i in range(total_partitions):
-            partition_self = job._inputs[0]._partitions[i]
-            task = ErTask(id=generate_task_id(job_id, i),
-                          name=job._name,
-                          inputs=[store._partitions[i] for store in job._inputs],
-                          job=job)
-            args.append(([task], partition_self._processor._command_endpoint))
+        if isinstance(frame, pd.DataFrame):
+            rows = frame.shape[0]
+            rows_per_partition = rows // total_partitions + 1
+            start = 0
+            for i in range(total_partitions):
+                if i >= rows:
+                    break
+                end = min(start + rows_per_partition, rows)
+                splitted = frame[start:end]
+                start = end
+                target_egg = self.ctx.route_to_egg(self.get_store()._partitions[i])
 
-        futures = self.__command_client.async_call(
-            args=args,
-            output_types=[ErPair],
-            command_uri=CommandURI(self.RUN_TASK_URI))
-        if merge_func is not None:
-            results = Queue()
-            for fut in futures:
-                fut.add_done_callback(lambda x: results.put(x.reuslt()))
-            return merge_func(results.get() for _ in range(len(futures)))
-        else:
-            result = list()
-            for future in futures:
-                ret_pair = future.result()[0]
-                result.append((self.functor_serdes.deserialize(ret_pair._key),
-                               self.functor_serdes.deserialize(ret_pair._value)))
-            return result
+                # memory copied
+                serialized_bytes = serialization_context.serialize(splitted).to_buffer().to_pybytes()
+                broker = FifoBroker()
+                broker.put(serialized_bytes)
+                broker.signal_write_finish()
+                send_future = transfer_client.send(broker, target_egg._transfer_endpoint, generate_task_id(job_id=job._id, partition_id=i))
+                send_future.result()
+
+        self._wait_job_finished(futures)
+
+        return RollFrame(self.__store, self.ctx)
+
+    def get_all(self):
+        def _func(task: ErTask):
+            tag = task._id
+            # sets serdes to avoid double serialize
+            with create_adapter(task._inputs[0]) as input_adapter:
+                batches = list(input_adapter.read_all())
+                return batches
+
+        functor = ErFunctor(name=RollFrame.GET_ALL, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(_func))
+        job = ErJob(id=generate_job_id(self.__session_id),
+                    name=RollFrame.GET_ALL,
+                    inputs=[self.__store],
+                    outputs=[self.__store],
+                    functors=[functor])
+
+        results = self._run_job(job)
+
+        serialization_context = pa.default_serialization_context()
+        frames = list()
+        # TODO:0: defaulting to pandas, may need to consider other datatypes
+        for r in results:
+            des_partitions = self.functor_serdes.deserialize(r[0]._value)
+            for frame in des_partitions:
+                frames.append(frame.to_pandas())
+
+        concatted = pd.concat(frames)
+        return FrameBatch(concatted)
+
+    # def shuffle(self):
+    #     def _inner_shuffle(parts):
+    #         in_part, out_part = parts[0], parts[1]
+    #         with _create_store_adapter(in_part) as in_store, _create_store_adapter(out_part) as out_store:
+    #             # TODO: merge batch
+    #             input_store.write_all(TransferFrame.get(tag))
+    #             for frame in in_store.read_all():
+    #                 for batch in frame.split(by_column_value=True):
+    #                     route_to_egg = xx
+    #                     get_egg(route_to_egg).send(batch)
+    #     return self.with_stores(_inner_shuffle)
 
 
-class RollTensor:
-    def __init__(self):
-        self.rf = None
-
-    def _bin_op(self, other, op):
-        def _inner_bin_func(parts):
-            in_part, out_part = parts[0], parts[1]
-            with _create_store_adapter(in_part) as in_store, _create_store_adapter(out_part) as out_store:
-                x = x_store... numpy
-                y = y_store.. numpy
-                return op(x, y)
-        self.rf.with_store(other.rf.store, func=xx)
-
-    def _add(self, other):
-        return self._bin_op(other, operator.add)
+# class RollTensor:
+#     def __init__(self):
+#         self.rf = None
+#
+#     def _bin_op(self, other, op):
+#         def _inner_bin_func(parts):
+#             in_part, out_part = parts[0], parts[1]
+#             with _create_store_adapter(in_part) as in_store, _create_store_adapter(out_part) as out_store:
+#                 x = x_store... numpy
+#                 y = y_store.. numpy
+#                 return op(x, y)
+#         self.rf.with_store(other.rf.store, func=xx)
+#
+#     def _add(self, other):
+#         return self._bin_op(other, operator.add)
