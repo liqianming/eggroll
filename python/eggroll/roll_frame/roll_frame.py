@@ -294,7 +294,6 @@ class RollFrame(object):
             serialization_context = pa.default_serialization_context()
             with create_adapter(task._inputs[0]) as input_adapter:
                 for batch in input_adapter.read_all():
-
                     broker.put(serialization_context.serialize(batch._data).to_buffer().to_pybytes())
                 broker.signal_write_finish()
 

@@ -25,12 +25,15 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from eggroll.core.constants import StoreTypes
 from eggroll.core.utils import time_now
 from eggroll.roll_frame.test.roll_frame_test_assets import get_debug_test_context
+from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
 from eggroll.utils.log_utils import get_logger
 
 L = get_logger()
 
 
 class TestRollFrameBase(unittest.TestCase):
+    df3 = pd.DataFrame.from_dict({"f_int": [1, 2, 3], "f_double": [1.0, 2.0, 3.0], "f_str": ["str1", None, "str3"], "f_none": [None, None, None]})
+    df4 = pd.DataFrame.from_dict({"f_int": [-3, 0, 6, 4], "f_double": [-1.0, 2.0, 3.0, 2.4], "f_str": ["str4", None, "str3", "str6"], "f_none": [None, None, None, None]})
     def setUp(self):
         self.ctx = get_debug_test_context()
 
@@ -39,14 +42,38 @@ class TestRollFrameBase(unittest.TestCase):
         # self.ctx.get_session().stop()
 
     def test_put_all(self):
-        df3 = pd.DataFrame.from_dict({"f_int": [1, 2, 3], "f_double": [1.0, 2.0, 3.0], "f_str": ["str1", None, "str3"], "f_none": [None, None, None]})
         rf = self.ctx.load('test_rf_ns', f'test_rf_name_1', options={"total_partitions": 2})
-        rf.put_all(df3)
+        rf.put_all(self.df3)
 
     def test_get_all(self):
         rf = self.ctx.load('test_rf_ns', f'test_rf_name_1', options={"total_partitions": 2})
         local_rf = rf.get_all()
+        self.assertTrue(self.df3.equals(local_rf.to_pandas()))
         print(local_rf.to_pandas())
+
+    def test_max(self):
+        def agg(iterable_frames):
+            frame = pd.concat(iterable_frames)
+            return frame.max()
+
+        def ef_max(task):
+            # def batch_max_generator(task):
+            #     with create_adapter(task._inputs[0]) as input_adapter:
+            #         for batch in input_adapter.read_all():
+            #             yield batch.to_pandas().max().to_frame().transpose()
+            # result = agg(batch_max_generator(task))
+
+            with create_adapter(task._inputs[0]) as input_adapter:
+                result = agg(batch.to_pandas().max().to_frame().transpose() for batch in input_adapter.read_all())
+
+            return result
+
+        rf = self.ctx.load('test_rf_ns', f'test_rf_name_1', options={"total_partitions": 2})
+
+        rf_results = rf.with_stores(ef_max)
+        result = agg(r[1].to_frame().transpose() for r in rf_results)
+        self.assertEqual(result['f_double'], 3.0)
+        return result
 
     def test_with_store(self):
         rf = self.ctx.load('test_rf_ns', f'test_rf_name_1', options={"total_partitions": 2})
