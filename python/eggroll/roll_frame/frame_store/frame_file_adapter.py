@@ -37,7 +37,7 @@ class FrameFileAdapter:
         except StopIteration:
             return
 
-        with pa.ipc.new_file(self.path, first.schema) as w:
+        with pa.ipc.new_file(self.path, first._schema) as w:
             w.write_batch(first._data)
             for batch in batches:
                 w.write_batch(batch)

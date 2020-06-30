@@ -96,13 +96,16 @@ class TransferService(object):
             try:
                 data = broker.get(block=True, timeout=0.1)
                 if data:
-                    header = transfer_pb2.TransferHeader(id=i, tag=tag)
-                    batch = transfer_pb2.TransferBatch(header=header, data=data)
+                    if isinstance(data, transfer_pb2.TransferBatch):
+                        batch = data
+                    else:
+                        header = transfer_pb2.TransferHeader(id=i, tag=tag)
+                        batch = transfer_pb2.TransferBatch(header=header, data=data)
                     i += 1
 
                     yield batch
             except queue.Empty as e:
-                # print("transfer client queue empty")
+                L.info(f"transfer client queue empty. tag={tag}")
                 pass
             except BrokerClosed as e:
                 break
@@ -158,7 +161,8 @@ class GrpcTransferServicer(transfer_pb2_grpc.TransferServiceServicer):
                 i+=1
                 yield batch
         else:
-            return TransferService.transfer_batch_generator_from_broker(callee_messages_broker, base_tag)
+            yield from TransferService.transfer_batch_generator_from_broker(callee_messages_broker, base_tag)
+            #return TransferService.transfer_batch_generator_from_broker(callee_messages_broker, base_tag)
 
 
 class GrpcTransferService(TransferService):

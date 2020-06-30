@@ -287,10 +287,13 @@ class RollFrame(object):
     def get_all(self):
         def _func(task: ErTask):
             tag = task._id
-            # sets serdes to avoid double serialize
+            broker = TransferService.get_or_create_broker(tag)
+            serialization_context = pa.default_serialization_context()
             with create_adapter(task._inputs[0]) as input_adapter:
-                batches = list(input_adapter.read_all())
-                return batches
+                for batch in input_adapter.read_all():
+
+                    broker.put(serialization_context.serialize(batch._data).to_buffer().to_pybytes())
+                broker.signal_write_finish()
 
         functor = ErFunctor(name=RollFrame.GET_ALL, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(_func))
         job = ErJob(id=generate_job_id(self.__session_id),
@@ -299,15 +302,17 @@ class RollFrame(object):
                     outputs=[self.__store],
                     functors=[functor])
 
-        results = self._run_job(job)
-
+        results = self._submit_job(job)
         serialization_context = pa.default_serialization_context()
         frames = list()
-        # TODO:0: defaulting to pandas, may need to consider other datatypes
-        for r in results:
-            des_partitions = self.functor_serdes.deserialize(r[0]._value)
-            for frame in des_partitions:
-                frames.append(frame.to_pandas())
+        transfer_client = TransferClient()
+        for p in self.__store._partitions:
+            tag = generate_task_id(job_id=job._id, partition_id=p._id)
+            target_endpoint = p._processor._transfer_endpoint
+            transfer_batch_iter = transfer_client.recv(endpoint=target_endpoint, tag=tag, broker=None)
+            for b in transfer_batch_iter:
+                fb = serialization_context.deserialize(b.data)
+                frames.append(fb.to_pandas())
 
         concatted = pd.concat(frames)
         return FrameBatch(concatted)
