@@ -76,6 +76,29 @@ class TestRollFrameBase(unittest.TestCase):
         self.assertEqual(result['f_double'], 3.0)
         return result
 
+    def test_max_with_merge(self):
+        def merger(iterable_series):
+            result = None
+            for series in iterable_series:
+                if result is not None:
+                    result = pd.concat([result.to_frame().transpose(),
+                                        series.to_frame().transpose()]).max()
+                else:
+                    result = series
+            return result
+
+        def ef_max(task):
+            with create_adapter(task._inputs[0]) as input_adapter:
+                result = merger(batch.to_pandas().max() for batch in input_adapter.read_all())
+
+                return result
+
+        rf = self.ctx.load('test_rf_ns', f'test_rf_name_1', options={"total_partitions": 2})
+
+        result = rf.with_stores(ef_max, merger)
+        self.assertEqual(result['f_double'], 3.0)
+        return result
+
     def test_with_store(self):
         rf = self.ctx.load('test_rf_ns', f'test_rf_name_1', options={"total_partitions": 2})
 

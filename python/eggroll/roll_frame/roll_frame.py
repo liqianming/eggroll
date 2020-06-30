@@ -320,7 +320,7 @@ class RollFrame(object):
         return FrameBatch(concatted)
 
     @_method_profile_logger
-    def with_stores(self, func, others=None, options: dict = None):
+    def with_stores(self, func, merge_func=None, others=None, options: dict = None):
         if options is None:
             options = {}
 
@@ -337,13 +337,22 @@ class RollFrame(object):
                     functors=[ErFunctor(name=RollFrame.WITH_STORES, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(func))],
                     options=options)
 
-        futures = self._run_job(job=job)
-        result = []
-
-        for future in futures:
-            ret_pair = future[0]
-            result.append((self.functor_serdes.deserialize(ret_pair._key),
-                           self.functor_serdes.deserialize(ret_pair._value)))
+        futures = self._submit_job(job=job)
+        result = None
+        if merge_func is None:
+            result = list()
+            for future in futures:
+                ret_pair = future.result()[0]
+                result.append((self.functor_serdes.deserialize(ret_pair._key),
+                               self.functor_serdes.deserialize(ret_pair._value)))
+        else:
+            results = Queue()
+            for f in futures:
+                f.add_done_callback(
+                        lambda r: results.put(
+                                self.functor_serdes.deserialize(
+                                        r.result()[0]._value)))
+            result = merge_func(results.get() for _ in range(len(futures)))
         return result
 
 
