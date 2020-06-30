@@ -171,6 +171,7 @@ class RollFrame(object):
 
     GET_ALL = 'getAll'
     PUT_ALL = 'putAll'
+    WITH_STORES = 'withStores'
 
     SERIALIZED_NONE = cloudpickle.dumps(None)
 
@@ -236,6 +237,7 @@ class RollFrame(object):
 
         return self._wait_job_finished(futures)
 
+    @_method_profile_logger
     def put_all(self, frame):
         def _func(task: ErTask):
             tag = task._id
@@ -284,6 +286,7 @@ class RollFrame(object):
 
         return RollFrame(self.__store, self.ctx)
 
+    @_method_profile_logger
     def get_all(self):
         def _func(task: ErTask):
             tag = task._id
@@ -316,6 +319,34 @@ class RollFrame(object):
 
         concatted = pd.concat(frames)
         return FrameBatch(concatted)
+
+    @_method_profile_logger
+    def with_stores(self, func, others=None, options: dict = None):
+        if options is None:
+            options = {}
+
+        if others is None:
+            others = []
+        total_partitions = self.get_partitions()
+        for other in others:
+            if other.get_partitions() != total_partitions:
+                raise ValueError(f"diff partitions: expected:{total_partitions}, actual:{other.get_partitions()}")
+        job_id = generate_job_id(self.__session_id, tag=RollFrame.WITH_STORES)
+        job = ErJob(id=job_id,
+                    name=RollFrame.WITH_STORES,
+                    inputs=[self.ctx.populate_processor(s.get_store()) for s in [self] + others],
+                    functors=[ErFunctor(name=RollFrame.WITH_STORES, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(func))],
+                    options=options)
+
+        futures = self._run_job(job=job)
+        result = []
+
+        for future in futures:
+            ret_pair = future[0]
+            result.append((self.functor_serdes.deserialize(ret_pair._key),
+                           self.functor_serdes.deserialize(ret_pair._value)))
+        return result
+
 
     # def shuffle(self):
     #     def _inner_shuffle(parts):

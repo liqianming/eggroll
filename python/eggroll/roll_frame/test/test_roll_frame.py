@@ -17,12 +17,17 @@
 import pandas as pd
 import pyarrow as pa
 import unittest
+import threading
+import time
 
 from concurrent.futures.thread import ThreadPoolExecutor
 
 from eggroll.core.constants import StoreTypes
 from eggroll.core.utils import time_now
 from eggroll.roll_frame.test.roll_frame_test_assets import get_debug_test_context
+from eggroll.utils.log_utils import get_logger
+
+L = get_logger()
 
 
 class TestRollFrameBase(unittest.TestCase):
@@ -42,3 +47,27 @@ class TestRollFrameBase(unittest.TestCase):
         rf = self.ctx.load('test_rf_ns', f'test_rf_name_1', options={"total_partitions": 2})
         local_rf = rf.get_all()
         print(local_rf.to_pandas())
+
+    def test_with_store(self):
+        rf = self.ctx.load('test_rf_ns', f'test_rf_name_1', options={"total_partitions": 2})
+
+        def get_max_threads_count(task):
+            def foo():
+                time.sleep(5)
+
+            ret = None
+            for i in range(1000):
+                try:
+                    t = threading.Thread(target=foo)
+                    t.start()
+                except:
+                    ret = threading.active_count()
+                    L.exception("============= exception caught. active threads", ret)
+
+            ret = threading.active_count()
+            L.info("============= exit normally. active threads", ret)
+
+            return ret
+
+        result = rf.with_stores(get_max_threads_count)
+        print(result)
