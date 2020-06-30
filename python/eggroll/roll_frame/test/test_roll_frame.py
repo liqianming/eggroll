@@ -67,7 +67,7 @@ class TestRollFrameBase(unittest.TestCase):
             with create_adapter(task._inputs[0]) as input_adapter:
                 result = agg(batch.to_pandas().max().to_frame().transpose() for batch in input_adapter.read_all())
 
-            return result
+                return result
 
         rf = self.ctx.load('test_rf_ns', f'test_rf_name_1', options={"total_partitions": 2})
 
