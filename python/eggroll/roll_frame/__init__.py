@@ -16,6 +16,7 @@
 import numpy as np
 import pandas as pd
 import pyarrow as pa
+from typing import Iterable
 
 import cloudpickle
 from eggroll.core.serdes.eggroll_serdes import PickleSerdes, \
@@ -50,6 +51,11 @@ class FrameBatch:
     @staticmethod
     def from_pandas(obj):
         return FrameBatch(obj)
+
+    @staticmethod
+    def concat(frames: Iterable):
+        frame = pd.concat(FrameBatch(f).to_pandas() for f in frames)
+        return FrameBatch(frame)
 
 
 class TensorBatch:

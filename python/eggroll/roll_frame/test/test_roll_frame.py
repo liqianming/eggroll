@@ -27,6 +27,7 @@ from eggroll.core.utils import time_now
 from eggroll.roll_frame.test.roll_frame_test_assets import get_debug_test_context
 from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
 from eggroll.utils.log_utils import get_logger
+from eggroll.roll_frame import FrameBatch
 
 L = get_logger()
 
@@ -53,8 +54,8 @@ class TestRollFrameBase(unittest.TestCase):
 
     def test_max(self):
         def agg(iterable_frames):
-            frame = pd.concat(iterable_frames)
-            return frame.max()
+            frame = FrameBatch.concat(iterable_frames)
+            return frame.to_pandas().max()
 
         def ef_max(task):
             # def batch_max_generator(task):
