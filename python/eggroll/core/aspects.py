@@ -50,3 +50,15 @@ def _method_profile_logger(func):
                    f'"cpu_time": {end_cpu_time - start_cpu_time}, '
                    f'"wall_time": {end_wall_time - start_wall_time}}}')
     return wrapper
+
+
+def _method_error_logger(func):
+    def wrapper(*args, **kwargs):
+        try:
+            result = func(*args, **kwargs)
+            return result
+        except Exception as e:
+            L.exception(e)
+            raise
+
+    return wrapper

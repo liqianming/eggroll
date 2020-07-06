@@ -19,7 +19,7 @@ from concurrent.futures import wait, FIRST_EXCEPTION
 from queue import Queue
 from threading import Thread
 
-from eggroll.core.aspects import _method_profile_logger
+from eggroll.core.aspects import _method_profile_logger, _method_error_logger
 from eggroll.core.client import CommandClient
 from eggroll.core.command.command_model import CommandURI
 from eggroll.core.conf_keys import SessionConfKeys, RollPairConfKeys
@@ -238,7 +238,8 @@ class RollFrame(object):
         return self._wait_job_finished(futures)
 
     @_method_profile_logger
-    def put_all(self, frame):
+    @_method_error_logger
+    def put_all(self, data):
         def _func(task: ErTask):
             tag = task._id
             broker = TransferService.get_or_create_broker(tag, write_signals=1)
@@ -250,7 +251,7 @@ class RollFrame(object):
                 TransferService.remove_broker(tag)
 
         total_partitions = self.get_partitions()
-        transfer_client = TransferClient()
+
         serialization_context = pa.default_serialization_context()
         functor = ErFunctor(name=RollFrame.PUT_ALL, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(_func))
 
@@ -262,15 +263,17 @@ class RollFrame(object):
 
         futures = self._submit_job(job=job)
 
-        if isinstance(frame, pd.DataFrame):
-            rows = frame.shape[0]
+        send_futures = []
+        if isinstance(data, pd.DataFrame):
+            transfer_client = TransferClient()
+            rows = data.shape[0]
             rows_per_partition = rows // total_partitions + 1
             start = 0
             for i in range(total_partitions):
                 if i >= rows:
                     break
                 end = min(start + rows_per_partition, rows)
-                splitted = frame[start:end]
+                splitted = data[start:end]
                 start = end
                 target_egg = self.ctx.route_to_egg(self.get_store()._partitions[i])
 
@@ -280,7 +283,28 @@ class RollFrame(object):
                 broker.put(serialized_bytes)
                 broker.signal_write_finish()
                 send_future = transfer_client.send(broker, target_egg._transfer_endpoint, generate_task_id(job_id=job._id, partition_id=i))
-                send_future.result()
+                send_futures.append(send_future)
+        elif isinstance(data, list):
+            brokers = [FifoBroker() for i in range(total_partitions)]
+
+            for i in range(total_partitions):
+                transfer_client = TransferClient()
+                send_future = transfer_client.send(broker=brokers[i],
+                                                   endpoint=self.get_store()._partitions[i]._processor._transfer_endpoint,
+                                                   tag=generate_task_id(job_id=job._id, partition_id=i))
+                send_futures.append(send_future)
+
+            batch_count = 0
+            for batch in data:
+                serialized_bytes = serialization_context.serialize(batch._data).to_buffer().to_pybytes()
+                brokers[batch_count // total_partitions].put(serialized_bytes)
+                batch_count += 1
+
+            for b in brokers:
+                b.signal_write_finish()
+
+            for f in send_futures:
+                f.result()
 
         self._wait_job_finished(futures)
 
@@ -314,10 +338,18 @@ class RollFrame(object):
             transfer_batch_iter = transfer_client.recv(endpoint=target_endpoint, tag=tag, broker=None)
             for b in transfer_batch_iter:
                 fb = serialization_context.deserialize(b.data)
-                frames.append(fb.to_pandas())
+                frames.append(fb)
 
-        concatted = pd.concat(frames)
-        return FrameBatch(concatted)
+        if len(frames) <= 0:
+            return FrameBatch.empty()
+
+        first = frames[0]
+        if b"eggroll.rollframe.tensor.shape" not in first.schema.metadata:
+            result = FrameBatch.concat(frames)
+        else:
+            result = FrameBatch(first)
+
+        return result
 
     @_method_profile_logger
     def with_stores(self, func, merge_func=None, others=None, options: dict = None):

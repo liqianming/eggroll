@@ -41,6 +41,9 @@ class FrameBatch:
             fb = pa.RecordBatch.from_pandas(data)
             self._data = fb
             self._schema = fb.schema
+        elif isinstance(data, pa.RecordBatch):
+            self._data = data
+            self._schema = data.schema
         else:
             self._data = data
             self._schema = schema
@@ -57,29 +60,42 @@ class FrameBatch:
         frame = pd.concat(FrameBatch(f).to_pandas() for f in frames)
         return FrameBatch(frame)
 
+    # TODO:0: implement numpy's empty interface
+    @staticmethod
+    def empty():
+        return FrameBatch(data=None, schema=None)
+
 
 class TensorBatch:
-    META_SHAPE_KEY = bytes("eggroll.roll_frame.tensor.shape", encoding="utf8")
+    META_SHAPE_KEY = bytes("eggroll.rollframe.tensor.shape", encoding="utf8")
     
     def __init__(self, data):
-        self._data = data
+        if isinstance(data, FrameBatch):
+            self._shape = [int(x) for x in str(data._schema.metadata[TensorBatch.META_SHAPE_KEY], encoding="utf8").split(",")]
+            self._data = pa.Tensor.from_numpy(data._data.to_pandas().to_numpy().reshape(self._shape))
+        elif isinstance(data, np.ndarray):
+            self._data = pa.Tensor.from_numpy(data)
+            self._shape = self._data.shape
+        else:
+            self._data = data
+            self._shape = data.shape
 
     def to_numpy(self):
         return self._data.to_numpy()
 
     @staticmethod
-    def from_numpy(obj):
-        return TensorBatch(pa.Tensor.from_numpy(obj))
+    def from_numpy(np_array: np.ndarray):
+        return TensorBatch(np_array)
 
     def to_frame(self):
-        shape = bytes(",".join(str(x) for x in self._data.shape), encoding="utf8")
-        return FrameBatch(pa.RecordBatch.from_arrays([self.to_numpy().reshape(-1)], names=['__f0'],
-                                                     dict_metadata={TensorBatch.META_SHAPE_KEY: shape}))
+        shape = bytes(",".join(str(x) for x in self._shape), encoding="utf8")
+        return FrameBatch(pa.RecordBatch.from_arrays(arrays=[self.to_numpy().reshape(-1)],
+                                                     names=['__data'],
+                                                     metadata={TensorBatch.META_SHAPE_KEY: shape}))
 
     @staticmethod
-    def from_frame(obj):
-        shape = [int(x) for x in str(obj._data.schema.metadata[TensorBatch.META_SHAPE_KEY], encoding="utf8").split(",")]
-        return FrameBatch(pa.Tensor.from_numpy(obj._data[0].to_numpy().reshape(shape)))
+    def from_frame(frame: FrameBatch):
+        return TensorBatch(frame)
 
 
 def create_functor(func_bin):

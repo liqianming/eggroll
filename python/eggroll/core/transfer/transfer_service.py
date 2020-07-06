@@ -105,7 +105,6 @@ class TransferService(object):
 
                     yield batch
             except queue.Empty as e:
-                L.info(f"transfer client queue empty. tag={tag}")
                 pass
             except BrokerClosed as e:
                 break
