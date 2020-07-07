@@ -72,7 +72,7 @@ class TestRollTensorBase(unittest.TestCase):
         rt = self.ctx.load(namespace=self.namespace, name=self.name_1p, options=self.options_1p)
         result = rt.with_stores(_max)
 
-        self.assertTrue((np.mat("9, 10, 11, 12") == result[0][1]).all())
+        self.assertTrue((np.max(self.mat1, axis=0) == result[0][1]).all())
         print(result)
 
     def test_put_all_3p(self):
@@ -108,7 +108,7 @@ class TestRollTensorBase(unittest.TestCase):
         rt = self.ctx.load(namespace=self.namespace, name=self.name_3p, options=self.options_3p)
         result = rt.with_stores(func=_max, merge_func=_merge)
 
-        self.assertTrue((np.mat("13, 14, 15, 16") == result.to_numpy()).all())
+        self.assertTrue((np.max(self.mat3, axis=0) == result.to_numpy()).all())
         print(result)
 
     def test_min_3p(self):
@@ -133,7 +133,7 @@ class TestRollTensorBase(unittest.TestCase):
         rt = self.ctx.load(namespace=self.namespace, name=self.name_3p, options=self.options_3p)
         result = rt.with_stores(func=_min, merge_func=_merge)
 
-        self.assertTrue((np.mat("1, 2, 3, 4") == result.to_numpy()).all())
+        self.assertTrue((np.min(self.mat3, axis=0) == result.to_numpy()).all())
         print(result.to_numpy())
 
     def test_avg(self):
@@ -163,7 +163,7 @@ class TestRollTensorBase(unittest.TestCase):
         rt = self.ctx.load(namespace=self.namespace, name=self.name_3p, options=self.options_3p)
         result = rt.with_stores(func=_sum_rows, merge_func=_merge)
 
-        self.assertTrue((np.mat("7, 8, 9, 10") == result.to_numpy()).all())
+        self.assertTrue((np.average(self.mat3, axis=0) == result.to_numpy()).all())
         print(result.to_numpy())
 
     def test_std(self):
