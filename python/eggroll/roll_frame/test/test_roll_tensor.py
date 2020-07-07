@@ -69,7 +69,7 @@ class TestRollTensorBase(unittest.TestCase):
                     result = TensorBatch(batch).to_numpy().max(axis=0)
                     return result
 
-        rt = self.ctx.load(namespace=self.namespace, name=self.name_1p, options=self.options_3p)
+        rt = self.ctx.load(namespace=self.namespace, name=self.name_1p, options=self.options_1p)
         result = rt.with_stores(_max)
 
         self.assertTrue((np.mat("9, 10, 11, 12") == result[0][1]).all())
@@ -85,3 +85,120 @@ class TestRollTensorBase(unittest.TestCase):
 
         self.assertTrue((self.mat3 == tensor.to_numpy()).all())
         print(tensor.to_numpy())
+
+    def test_max_3p(self):
+        def _merge(partial_result):
+            result = None
+            shape = None
+            for r in partial_result:
+                if result is not None:
+                    result = np.max(np.concatenate([result, r]), axis=0).reshape(shape)
+                else:
+                    result = r
+                    shape = r.shape
+
+            return TensorBatch(result)
+
+        def _max(task):
+            with create_adapter(task._inputs[0]) as input_adapter:
+                for batch in input_adapter.read_all():
+                    result = TensorBatch(batch).to_numpy().max(axis=0)
+                    return result.reshape(1, result.shape[0])
+
+        rt = self.ctx.load(namespace=self.namespace, name=self.name_3p, options=self.options_3p)
+        result = rt.with_stores(func=_max, merge_func=_merge)
+
+        self.assertTrue((np.mat("13, 14, 15, 16") == result.to_numpy()).all())
+        print(result)
+
+    def test_min_3p(self):
+        def _merge(partial_result):
+            result = None
+            shape = None
+            for r in partial_result:
+                if result is not None:
+                    result = np.min(np.concatenate([result, r]), axis=0).reshape(shape)
+                else:
+                    result = r
+                    shape = r.shape
+
+            return TensorBatch(result)
+
+        def _min(task):
+            with create_adapter(task._inputs[0]) as input_adapter:
+                for batch in input_adapter.read_all():
+                    result = TensorBatch(batch).to_numpy().min(axis=0)
+                    return result.reshape(1, result.shape[0])
+
+        rt = self.ctx.load(namespace=self.namespace, name=self.name_3p, options=self.options_3p)
+        result = rt.with_stores(func=_min, merge_func=_merge)
+
+        self.assertTrue((np.mat("1, 2, 3, 4") == result.to_numpy()).all())
+        print(result.to_numpy())
+
+    def test_avg(self):
+        def _merge(partial_result):
+            result = None
+            partial_shape = None
+            total_rows = 0
+
+            for r in partial_result:
+                if result is not None:
+                    result = np.sum(np.concatenate([result, r[0]]), axis=0).reshape(partial_shape)
+                else:
+                    result = r[0]
+                    partial_shape = r[0].shape
+                total_rows += r[1]
+
+            result = np.divide(result, total_rows)
+            return TensorBatch(result)
+
+        def _sum_rows(task):
+            with create_adapter(task._inputs[0]) as input_adapter:
+                for batch in input_adapter.read_all():
+                    tb = TensorBatch(batch)
+                    sum = tb.to_numpy().sum(axis=0)
+                    return (sum.reshape(1, sum.shape[0]), tb._shape[0])
+
+        rt = self.ctx.load(namespace=self.namespace, name=self.name_3p, options=self.options_3p)
+        result = rt.with_stores(func=_sum_rows, merge_func=_merge)
+
+        self.assertTrue((np.mat("7, 8, 9, 10") == result.to_numpy()).all())
+        print(result.to_numpy())
+
+    def test_std(self):
+        def _merge(partial_result):
+            sum_of_square_ = None
+            square_of_sum_ = None
+            partial_shape = None
+            total_rows = 0
+
+            for r in partial_result:
+                if sum_of_square_ is not None:
+                    sum_of_square_ = np.sum([sum_of_square_, r[0]], axis=0).reshape(partial_shape)
+                    square_of_sum_ = np.sum([square_of_sum_, r[1]], axis=0).reshape(partial_shape)
+                else:
+                    sum_of_square_ = r[0]
+                    square_of_sum_ = r[1]
+                    partial_shape = r[0].shape
+                total_rows += r[2]
+
+            sum_of_square_ = sum_of_square_ / total_rows
+            square_of_sum_ = (square_of_sum_ * square_of_sum_) / (total_rows * total_rows)
+            result = np.sqrt(sum_of_square_ - square_of_sum_)
+            return TensorBatch(result)
+
+        def _std(task):
+            with create_adapter(task._inputs[0]) as input_adapter:
+                for batch in input_adapter.read_all():
+                    tb = TensorBatch(batch)
+                    npb = tb.to_numpy()
+                    sum_of_square = np.sum(np.power(npb, 2), axis=0).reshape(1, tb._shape[1])
+                    sum = np.sum(npb, axis=0).reshape(1, tb._shape[1])
+                    return (sum_of_square, sum, tb._shape[0])
+
+        rt = self.ctx.load(namespace=self.namespace, name=self.name_3p, options=self.options_3p)
+        result = rt.with_stores(func=_std, merge_func=_merge)
+
+        self.assertTrue((np.std(self.mat3, axis=0) == result.to_numpy()).all())
+        print(result.to_numpy())
