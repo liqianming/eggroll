@@ -68,8 +68,17 @@ class FrameBatch:
 
 class TensorBatch:
     META_SHAPE_KEY = bytes("eggroll.rollframe.tensor.shape", encoding="utf8")
-    
-    def __init__(self, data):
+    META_BLOCK_START_KEY = bytes("eggroll.rollframe.tensor.block.start", encoding="utf8")
+    META_BLOCK_END_KEY = bytes("eggroll.rollframe.tensor.block.end", encoding="utf8")
+
+    def __init__(self,
+                 data,
+                 block_start: tuple = None,
+                 block_end: tuple = None,
+                 options: dict = None):
+        if options is None:
+            options = dict()
+
         if isinstance(data, FrameBatch):
             self._shape = [int(x) for x in str(data._schema.metadata[TensorBatch.META_SHAPE_KEY], encoding="utf8").split(",")]
             self._data = pa.Tensor.from_numpy(data._data.to_pandas().to_numpy().reshape(self._shape))
@@ -80,6 +89,28 @@ class TensorBatch:
             self._data = data
             self._shape = data.shape
 
+        self._block_start = block_start
+        self._block_end = block_end
+
+    @staticmethod
+    def _int_tuple_to_str(t: tuple):
+        return bytes(",".join(str(x) for x in t), encoding="utf8")
+
+    @staticmethod
+    def _str_to_int_tuple(s: str):
+        return tuple(int(x) for x in s.decode(encoding="utf8").split(","))
+
+    def _generate_metadata(self):
+        result = {}
+        result[TensorBatch.META_SHAPE_KEY] = TensorBatch._int_tuple_to_str(self._shape)
+        if self._block_start is not None:
+            result[TensorBatch.META_BLOCK_START_KEY] = TensorBatch._int_tuple_to_str(self._block_start)
+
+        if self._block_end is not None:
+            result[TensorBatch.META_BLOCK_END_KEY] = TensorBatch._int_tuple_to_str(self._block_end)
+
+        return result
+
     def to_numpy(self):
         return self._data.to_numpy()
 
@@ -88,10 +119,9 @@ class TensorBatch:
         return TensorBatch(np_array)
 
     def to_frame(self):
-        shape = bytes(",".join(str(x) for x in self._shape), encoding="utf8")
         return FrameBatch(pa.RecordBatch.from_arrays(arrays=[self.to_numpy().reshape(-1)],
                                                      names=['__data'],
-                                                     metadata={TensorBatch.META_SHAPE_KEY: shape}))
+                                                     metadata=self._generate_metadata()))
 
     @staticmethod
     def from_frame(frame: FrameBatch):

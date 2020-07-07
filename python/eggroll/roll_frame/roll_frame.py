@@ -18,6 +18,7 @@ import uuid
 from concurrent.futures import wait, FIRST_EXCEPTION
 from queue import Queue
 from threading import Thread
+from typing import Iterable
 
 from eggroll.core.aspects import _method_profile_logger, _method_error_logger
 from eggroll.core.client import CommandClient
@@ -268,11 +269,12 @@ class RollFrame(object):
             transfer_client = TransferClient()
             rows = data.shape[0]
             rows_per_partition = rows // total_partitions + 1
+            rows_extra = rows % rows_per_partition
             start = 0
             for i in range(total_partitions):
                 if i >= rows:
                     break
-                end = min(start + rows_per_partition, rows)
+                end = min(start + rows_per_partition + (1 if i < rows_extra else 0), rows)
                 splitted = data[start:end]
                 start = end
                 target_egg = self.ctx.route_to_egg(self.get_store()._partitions[i])
@@ -284,7 +286,7 @@ class RollFrame(object):
                 broker.signal_write_finish()
                 send_future = transfer_client.send(broker, target_egg._transfer_endpoint, generate_task_id(job_id=job._id, partition_id=i))
                 send_futures.append(send_future)
-        elif isinstance(data, list):
+        elif isinstance(data, Iterable):
             brokers = [FifoBroker() for i in range(total_partitions)]
 
             for i in range(total_partitions):
@@ -297,7 +299,7 @@ class RollFrame(object):
             batch_count = 0
             for batch in data:
                 serialized_bytes = serialization_context.serialize(batch._data).to_buffer().to_pybytes()
-                brokers[batch_count // total_partitions].put(serialized_bytes)
+                brokers[batch_count % total_partitions].put(serialized_bytes)
                 batch_count += 1
 
             for b in brokers:
@@ -338,16 +340,16 @@ class RollFrame(object):
             transfer_batch_iter = transfer_client.recv(endpoint=target_endpoint, tag=tag, broker=None)
             for b in transfer_batch_iter:
                 fb = serialization_context.deserialize(b.data)
-                frames.append(fb)
+                frames.append(FrameBatch(fb))
 
         if len(frames) <= 0:
             return FrameBatch.empty()
 
         first = frames[0]
-        if b"eggroll.rollframe.tensor.shape" not in first.schema.metadata:
-            result = FrameBatch.concat(frames)
+        if b"eggroll.rollframe.tensor.shape" in first._schema.metadata:
+            result = frames
         else:
-            result = FrameBatch(first)
+            result = FrameBatch.concat(frames)
 
         return result
 

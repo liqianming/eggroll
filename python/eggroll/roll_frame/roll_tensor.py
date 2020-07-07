@@ -130,19 +130,45 @@ class RollTensor(object):
 
     @_method_profile_logger
     def put_all(self, tensor):
-        frame = TensorBatch.from_numpy(tensor).to_frame()
-        rf = self._rf.put_all([frame])
+        def gen_axis_0_split(tensor_batch: TensorBatch, total_partitions):
+            npt = tensor_batch.to_numpy()
+            axis_0_per_block = npt.shape[0] // total_partitions
+            axis_0_extra = npt.shape[0] % total_partitions
+
+            axis_0_start = 0
+            for i in range(total_partitions):
+                axis_0_end = min(axis_0_start + axis_0_per_block + (1 if i < axis_0_extra else 0), npt.shape[0])
+                batch = npt[axis_0_start:axis_0_end]
+                fb = TensorBatch(data=batch, block_start=(axis_0_start, 0), block_end=(axis_0_end - 1, npt.shape[1] - 1)).to_frame()
+                axis_0_start = axis_0_end
+                yield fb
+
+        tensor_batch = TensorBatch(tensor)
+        rf = self._rf.put_all(gen_axis_0_split(
+                tensor_batch=tensor_batch,
+                total_partitions=self.get_partitions()))
         return RollTensor(rf.get_store(), self.ctx)
 
     @_method_profile_logger
     def get_all(self):
-        fb = self._rf.get_all()
-        return TensorBatch.from_frame(frame=fb)
+        fbs = self._rf.get_all()
+        start_coordinate = TensorBatch._str_to_int_tuple(fbs[0]._schema.metadata[TensorBatch.META_BLOCK_START_KEY])
+        end_coordinate = TensorBatch._str_to_int_tuple(fbs[-1]._schema.metadata[TensorBatch.META_BLOCK_END_KEY])
+        full_shape = tuple(np.add(np.subtract(end_coordinate, start_coordinate), (1, 1)))
+
+        arrays = []
+        for f in fbs:
+            a = TensorBatch(f).to_numpy()
+            arrays.append(a)
+
+        result = np.concatenate(arrays).reshape(full_shape)
+
+        return TensorBatch(result)
 
     @_method_profile_logger
     def with_stores(self, func, merge_func=None, others=None, options: dict = None):
         return self._rf.with_stores(func=func,
-                                  merge_func=merge_func,
-                                  others=others,
-                                  options=options)
+                                    merge_func=merge_func,
+                                    others=others,
+                                    options=options)
 
