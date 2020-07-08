@@ -18,7 +18,7 @@ import uuid
 from concurrent.futures import wait, FIRST_EXCEPTION
 from queue import Queue
 from threading import Thread
-from typing import Iterable
+from typing import Iterable, Union
 
 from eggroll.core.aspects import _method_profile_logger, _method_error_logger
 from eggroll.core.client import CommandClient
@@ -240,7 +240,7 @@ class RollFrame(object):
 
     @_method_profile_logger
     @_method_error_logger
-    def put_all(self, data):
+    def put_all(self, data: Union[pd.DataFrame, Iterable]):
         def _func(task: ErTask):
             tag = task._id
             broker = TransferService.get_or_create_broker(tag, write_signals=1)

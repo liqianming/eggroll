@@ -17,6 +17,7 @@
 import pandas as pd
 import numpy as np
 import pyarrow as pa
+from typing import Union
 
 from eggroll.core.aspects import _method_profile_logger
 from eggroll.core.client import CommandClient
@@ -35,7 +36,7 @@ L = get_logger()
 
 
 class RollTensorContext(object):
-    def __init__(self, session: ErSession, rf_ctx : RollFrameContext = None):
+    def __init__(self, session: ErSession, rf_ctx: RollFrameContext = None):
         if session is None and rf_ctx is None:
             raise ValueError(f'both session and context are None')
         if rf_ctx:
@@ -72,6 +73,24 @@ class RollTensorContext(object):
 
 class RollTensor(object):
     RUN_TASK_URI = RollFrame.RUN_TASK_URI
+
+    def dispatch(self, other):
+        op = inspect.getxxx # add
+        new_m = op + "loc" + "roll"
+        return getattr(self, new_m)(other)
+
+    def __add__(self, other):
+        self.dispatch(other)
+        # loc & shape=[1] => bcast
+
+        # loc & shape = [x,y] => scatter => elem wise
+
+    def __add__loc_roll(self, other):
+        bcast
+    def __add__roll_roll(self, other):
+        scatter
+
+
     def __init__(self, er_store: ErStore, rt_ctx: RollTensorContext):
         if not rt_ctx:
             raise ValueError('rt_ctx cannot be None')
@@ -172,3 +191,13 @@ class RollTensor(object):
                                     others=others,
                                     options=options)
 
+
+class RollLocalTensor(object):
+    def __init__(self, data):
+        self._data = TensorBatch(data)
+
+    def get_all(self):
+        return self._data
+
+    def to_numpy(self, reshape=True):
+        return self._data.to_numpy(reshape=reshape)

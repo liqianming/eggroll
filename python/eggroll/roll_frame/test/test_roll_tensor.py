@@ -30,6 +30,7 @@ from eggroll.roll_frame.test.roll_tensor_test_assets import get_debug_test_conte
 from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
 from eggroll.utils.log_utils import get_logger
 from eggroll.roll_frame import FrameBatch, TensorBatch
+from eggroll.roll_frame.roll_tensor import RollLocalTensor
 
 L = get_logger()
 
@@ -66,7 +67,7 @@ class TestRollTensorBase(unittest.TestCase):
         def _max(task):
             with create_adapter(task._inputs[0]) as input_adapter:
                 for batch in input_adapter.read_all():
-                    result = TensorBatch(batch).to_numpy().max(axis=0)
+                    result = RollLocalTensor(batch).to_numpy().max(axis=0)
                     return result
 
         rt = self.ctx.load(namespace=self.namespace, name=self.name_1p, options=self.options_1p)
@@ -97,7 +98,7 @@ class TestRollTensorBase(unittest.TestCase):
                     result = r
                     shape = r.shape
 
-            return TensorBatch(result)
+            return RollLocalTensor(result)
 
         def _max(task):
             with create_adapter(task._inputs[0]) as input_adapter:
@@ -122,7 +123,7 @@ class TestRollTensorBase(unittest.TestCase):
                     result = r
                     shape = r.shape
 
-            return TensorBatch(result)
+            return RollLocalTensor(result)
 
         def _min(task):
             with create_adapter(task._inputs[0]) as input_adapter:
@@ -151,7 +152,7 @@ class TestRollTensorBase(unittest.TestCase):
                 total_rows += r[1]
 
             result = np.divide(result, total_rows)
-            return TensorBatch(result)
+            return RollLocalTensor(result)
 
         def _sum_rows(task):
             with create_adapter(task._inputs[0]) as input_adapter:
@@ -186,7 +187,7 @@ class TestRollTensorBase(unittest.TestCase):
             sum_of_square_ = sum_of_square_ / total_rows
             square_of_sum_ = (square_of_sum_ * square_of_sum_) / (total_rows * total_rows)
             result = np.sqrt(sum_of_square_ - square_of_sum_)
-            return TensorBatch(result)
+            return RollLocalTensor(result)
 
         def _std(task):
             with create_adapter(task._inputs[0]) as input_adapter:
@@ -194,11 +195,19 @@ class TestRollTensorBase(unittest.TestCase):
                     tb = TensorBatch(batch)
                     npb = tb.to_numpy()
                     sum_of_square = np.sum(np.power(npb, 2), axis=0).reshape(1, tb._shape[1])
-                    sum = np.sum(npb, axis=0).reshape(1, tb._shape[1])
-                    return (sum_of_square, sum, tb._shape[0])
+                    sum_ = np.sum(npb, axis=0).reshape(1, tb._shape[1])
+                    return (sum_of_square, sum_, tb._shape[0])
 
         rt = self.ctx.load(namespace=self.namespace, name=self.name_3p, options=self.options_3p)
         result = rt.with_stores(func=_std, merge_func=_merge)
 
         self.assertTrue((np.std(self.mat3, axis=0) == result.to_numpy()).all())
         print(result.to_numpy())
+
+    def test_local_max(self):
+        rlt = RollLocalTensor(self.mat3)
+        result = rlt.get_all().to_numpy().max(axis=0)
+        self.assertTrue((np.max(self.mat3, axis=0) == result).all())
+        print(result)
+
+

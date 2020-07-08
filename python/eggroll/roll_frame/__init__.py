@@ -111,8 +111,12 @@ class TensorBatch:
 
         return result
 
-    def to_numpy(self):
-        return self._data.to_numpy()
+    def to_numpy(self, reshape=True) -> np.ndarray:
+        result = self._data.to_numpy()
+        if reshape:
+            result = result.reshape(self._shape)
+
+        return result
 
     @staticmethod
     def from_numpy(np_array: np.ndarray):
