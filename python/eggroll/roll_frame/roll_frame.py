@@ -47,6 +47,7 @@ from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
 from eggroll.roll_frame.transfer_frame import TransferFrame
 from eggroll.core.transfer.transfer_service import TransferClient, TransferService
 from eggroll.core.utils import generate_job_id, generate_task_id
+from eggroll.core.serdes.eggroll_serdes import DefaultArrowSerdes
 
 
 L = get_logger()
@@ -125,17 +126,13 @@ class RollFrameContext(object):
     def parallelize(self, data, options: dict = None):
         if options is None:
             options = {}
-        namespace = options.get("namespace", None)
-        name = options.get("name", None)
-        options['store_type'] = options.get("store_type", StoreTypes.ROLLPAIR_IN_MEMORY)
+        namespace = options.get("namespace", self.session_id)
+        name = options.get("name", f'rf_{uuid.uuid1()}')
+        options['store_type'] = options.get("store_type", StoreTypes.ROLLFRAME_FILE)
         create_if_missing = options.get("create_if_missing", True)
 
-        if namespace is None:
-            namespace = self.session_id
-        if name is None:
-            name = str(uuid.uuid1())
-        rp = self.load(namespace=namespace, name=name, options=options)
-        return rp.parallelize(data, options=options)
+        rf = self.load(namespace=namespace, name=name, options=options)
+        return rf.put_all(data, options=options)
 
     '''store name only supports full name and reg: *, *abc ,abc* and a*c'''
     def cleanup(self, namespace, name, options: dict = None):
@@ -240,20 +237,22 @@ class RollFrame(object):
 
     @_method_profile_logger
     @_method_error_logger
-    def put_all(self, data: Union[pd.DataFrame, Iterable]):
+    def put_all(self, data: Union[pd.DataFrame, Iterable], options: dict = None):
+        if options is None:
+            options = {}
         def _func(task: ErTask):
             tag = task._id
             broker = TransferService.get_or_create_broker(tag, write_signals=1)
             with create_adapter(task._outputs[0]) as output_adapter:
-                pa_serdes_context = pa.default_serialization_context()
+                #pa_serdes_context = pa.default_serialization_context()
                 for batch in broker:
-                    b = pa_serdes_context.deserialize(batch.data)
+                    b = DefaultArrowSerdes.deserialize(batch.data)
                     output_adapter.write_all([b])
                 TransferService.remove_broker(tag)
 
         total_partitions = self.get_partitions()
 
-        serialization_context = pa.default_serialization_context()
+        #serialization_context = pa.default_serialization_context()
         functor = ErFunctor(name=RollFrame.PUT_ALL, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(_func))
 
         job = ErJob(id=generate_job_id(self.__session_id),
@@ -280,7 +279,8 @@ class RollFrame(object):
                 target_egg = self.ctx.route_to_egg(self.get_store()._partitions[i])
 
                 # memory copied
-                serialized_bytes = serialization_context.serialize(splitted).to_buffer().to_pybytes()
+                # TODO:0: does RDMA need memory copy here?
+                serialized_bytes = DefaultArrowSerdes.serialize(splitted)#.to_buffer().to_pybytes()
                 broker = FifoBroker()
                 broker.put(serialized_bytes)
                 broker.signal_write_finish()
@@ -298,7 +298,7 @@ class RollFrame(object):
 
             batch_count = 0
             for batch in data:
-                serialized_bytes = serialization_context.serialize(batch._data).to_buffer().to_pybytes()
+                serialized_bytes = DefaultArrowSerdes.serialize(batch._data)#.to_buffer().to_pybytes()
                 brokers[batch_count % total_partitions].put(serialized_bytes)
                 batch_count += 1
 
@@ -313,14 +313,16 @@ class RollFrame(object):
         return RollFrame(self.__store, self.ctx)
 
     @_method_profile_logger
-    def get_all(self):
+    def get_all(self, options: dict = None):
+        if options is None:
+            options = {}
         def _func(task: ErTask):
             tag = task._id
             broker = TransferService.get_or_create_broker(tag)
             serialization_context = pa.default_serialization_context()
             with create_adapter(task._inputs[0]) as input_adapter:
                 for batch in input_adapter.read_all():
-                    broker.put(serialization_context.serialize(batch._data).to_buffer().to_pybytes())
+                    broker.put(DefaultArrowSerdes.serialize(batch._data))#.to_buffer().to_pybytes())
                 broker.signal_write_finish()
 
         functor = ErFunctor(name=RollFrame.GET_ALL, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(_func))
@@ -331,7 +333,7 @@ class RollFrame(object):
                     functors=[functor])
 
         results = self._submit_job(job)
-        serialization_context = pa.default_serialization_context()
+        #serialization_context = pa.default_serialization_context()
         frames = list()
         transfer_client = TransferClient()
         for p in self.__store._partitions:
@@ -339,7 +341,7 @@ class RollFrame(object):
             target_endpoint = p._processor._transfer_endpoint
             transfer_batch_iter = transfer_client.recv(endpoint=target_endpoint, tag=tag, broker=None)
             for b in transfer_batch_iter:
-                fb = serialization_context.deserialize(b.data)
+                fb = DefaultArrowSerdes.deserialize(b.data)
                 frames.append(FrameBatch(fb))
 
         if len(frames) <= 0:

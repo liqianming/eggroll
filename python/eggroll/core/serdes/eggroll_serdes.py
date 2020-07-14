@@ -83,6 +83,21 @@ class PickleSerdes(ABCSerdes):
             return eggroll_pickle_loads(_bytes)
 
 
+class DefaultArrowSerdes(ABCSerdes):
+    from pyarrow import default_serialization_context
+    serialization_context = default_serialization_context()
+
+    @staticmethod
+    def serialize(_obj):
+        return DefaultArrowSerdes.serialization_context\
+            .serialize(_obj).to_buffer().to_pybytes()
+
+    @staticmethod
+    def deserialize(_bytes):
+        return DefaultArrowSerdes.default_serialization_context()\
+            .deserialize(_bytes)
+
+
 class EmptySerdes(ABCSerdes):
     @staticmethod
     def serialize(_obj):

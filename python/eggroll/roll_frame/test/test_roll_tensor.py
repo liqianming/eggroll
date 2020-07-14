@@ -30,7 +30,6 @@ from eggroll.roll_frame.test.roll_tensor_test_assets import get_debug_test_conte
 from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
 from eggroll.utils.log_utils import get_logger
 from eggroll.roll_frame import FrameBatch, TensorBatch
-from eggroll.roll_frame.roll_tensor import RollLocalTensor
 
 L = get_logger()
 
@@ -38,12 +37,12 @@ L = get_logger()
 class TestRollTensorBase(unittest.TestCase):
     mat1 = np.mat("1, 2, 3, 4; 5, 6, 7, 8; 9, 10, 11, 12")
     mat3 = np.mat("1, 2, 3, 4; 5, 6, 7, 8; 9, 10, 11, 12; 13, 14, 15, 16")
+    vec = np.mat("1, 2, 3, 4")
     name_1p = f'test_rt_name_1p'
     name_3p = f'test_rt_name_3p'
     namespace = 'test_rt_namespace'
     options_1p = {'total_partitions': 1}
     options_3p = {'total_partitions': 3}
-
 
     def setUp(self):
         self.ctx = get_debug_test_context()
@@ -67,7 +66,7 @@ class TestRollTensorBase(unittest.TestCase):
         def _max(task):
             with create_adapter(task._inputs[0]) as input_adapter:
                 for batch in input_adapter.read_all():
-                    result = RollLocalTensor(batch).to_numpy().max(axis=0)
+                    result = TensorBatch(batch).to_numpy().max(axis=0)
                     return result
 
         rt = self.ctx.load(namespace=self.namespace, name=self.name_1p, options=self.options_1p)
@@ -98,7 +97,7 @@ class TestRollTensorBase(unittest.TestCase):
                     result = r
                     shape = r.shape
 
-            return RollLocalTensor(result)
+            return TensorBatch(result)
 
         def _max(task):
             with create_adapter(task._inputs[0]) as input_adapter:
@@ -123,7 +122,7 @@ class TestRollTensorBase(unittest.TestCase):
                     result = r
                     shape = r.shape
 
-            return RollLocalTensor(result)
+            return TensorBatch(result)
 
         def _min(task):
             with create_adapter(task._inputs[0]) as input_adapter:
@@ -152,7 +151,7 @@ class TestRollTensorBase(unittest.TestCase):
                 total_rows += r[1]
 
             result = np.divide(result, total_rows)
-            return RollLocalTensor(result)
+            return TensorBatch(result)
 
         def _sum_rows(task):
             with create_adapter(task._inputs[0]) as input_adapter:
@@ -187,7 +186,7 @@ class TestRollTensorBase(unittest.TestCase):
             sum_of_square_ = sum_of_square_ / total_rows
             square_of_sum_ = (square_of_sum_ * square_of_sum_) / (total_rows * total_rows)
             result = np.sqrt(sum_of_square_ - square_of_sum_)
-            return RollLocalTensor(result)
+            return TensorBatch(result)
 
         def _std(task):
             with create_adapter(task._inputs[0]) as input_adapter:
@@ -205,9 +204,21 @@ class TestRollTensorBase(unittest.TestCase):
         print(result.to_numpy())
 
     def test_local_max(self):
-        rlt = RollLocalTensor(self.mat3)
-        result = rlt.get_all().to_numpy().max(axis=0)
+        result = TensorBatch(self.mat3).to_numpy().max(axis=0)
         self.assertTrue((np.max(self.mat3, axis=0) == result).all())
         print(result)
 
+    def test_sub_dist_local(self):
+        rt = self.ctx.load(namespace=self.namespace, name=self.name_3p, options=self.options_3p)
+        tb = TensorBatch(self.vec)
 
+        result = rt - tb
+        self.assertTrue((result.get_all().to_numpy() == self.mat3 - self.vec).all())
+        print(result.get_all().to_numpy())
+
+    def test_truediv_dist_local(self):
+        rt = self.ctx.load(namespace=self.namespace, name=self.name_3p, options=self.options_3p)
+        tb = TensorBatch(self.vec)
+        result = rt / tb
+        self.assertTrue((result.get_all().to_numpy() == self.mat3 / self.vec).all())
+        print(result.get_all().to_numpy())

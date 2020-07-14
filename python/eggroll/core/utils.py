@@ -40,6 +40,7 @@ class ErConfKey(object):
                              get_static_er_conf().get(self.key, self.default_value))
         return result
 
+
 def set_static_er_conf(a_dict):
     global static_er_conf
 
@@ -51,10 +52,10 @@ def get_static_er_conf(options: dict = None):
         options = {}
     global static_er_conf
     if not static_er_conf:
-        eggroll_home = os.getenv('EGGROLL_HOME', None)
-        if not eggroll_home:
-            raise EnvironmentError('EGGROLL_HOME is not set')
-        conf_path = options.get("eggroll.static.conf.path", f"{eggroll_home}/conf/eggroll.properties")
+        #eggroll_home = os.getenv('EGGROLL_HOME', None)
+        #if not eggroll_home:
+        #    raise EnvironmentError('EGGROLL_HOME is not set')
+        conf_path = options.get("eggroll.static.conf.path", f"{get_eggroll_home()}/conf/eggroll.properties")
         print(f"static conf path: {conf_path}")
         configs = configparser.ConfigParser()
         configs.read(conf_path)
@@ -225,3 +226,12 @@ def to_one_line_string(msg, as_one_line=True):
     if isinstance(msg, str) or isinstance(msg, bytes):
         return msg
     return MessageToString(msg, as_one_line=as_one_line)
+
+
+_eggroll_home = None
+def get_eggroll_home():
+    global _eggroll_home
+    if not _eggroll_home:
+        _eggroll_home = os.getenv("EGGROLL_HOME", os.path.realpath(f'{__file__}/../../../..'))
+    return _eggroll_home
+

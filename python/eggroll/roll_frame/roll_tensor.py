@@ -14,9 +14,11 @@
 #
 #
 
+import inspect
 import pandas as pd
 import numpy as np
 import pyarrow as pa
+import uuid
 from typing import Union
 
 from eggroll.core.aspects import _method_profile_logger
@@ -29,8 +31,10 @@ from eggroll.core.meta_model import ErStoreLocator, ErJob, ErStore, ErFunctor, \
     ErTask, ErPair, ErPartition
 from eggroll.core.session import ErSession
 from eggroll.roll_frame import TensorBatch
+from eggroll.roll_frame.frame_store import create_adapter
 from eggroll.roll_frame.roll_frame import RollFrameContext, RollFrame
 from eggroll.utils.log_utils import get_logger
+from eggroll.core.serdes.eggroll_serdes import DefaultArrowSerdes
 
 L = get_logger()
 
@@ -70,9 +74,23 @@ class RollTensorContext(object):
 
         return RollTensor(rf.get_store(), self)
 
+    def parallelize(self, data, options: dict = None):
+        if options is None:
+            options = {}
+        namespace = options.get("namespace", self.session_id)
+        name = options.get("name", f'rt_{uuid.uuid1()}')
+        options['store_type'] = options.get("store_type", StoreTypes.ROLLFRAME_FILE)
+        create_if_missing = options.get("create_if_missing", True)
+
+        rt = self.load(namespace=namespace, name=name, options=options)
+        return rt.put_all(data, options=options)
+
+
+
 
 class RollTensor(object):
     RUN_TASK_URI = RollFrame.RUN_TASK_URI
+
 
     def dispatch(self, other):
         op = inspect.getxxx # add
@@ -87,9 +105,9 @@ class RollTensor(object):
 
     def __add__loc_roll(self, other):
         bcast
+
     def __add__roll_roll(self, other):
         scatter
-
 
     def __init__(self, er_store: ErStore, rt_ctx: RollTensorContext):
         if not rt_ctx:
@@ -148,7 +166,9 @@ class RollTensor(object):
         return self._wait_job_finished(futures)
 
     @_method_profile_logger
-    def put_all(self, tensor):
+    def put_all(self, tensor, options: dict = None):
+        if options is None:
+            options = {}
         def gen_axis_0_split(tensor_batch: TensorBatch, total_partitions):
             npt = tensor_batch.to_numpy()
             axis_0_per_block = npt.shape[0] // total_partitions
@@ -169,10 +189,12 @@ class RollTensor(object):
         return RollTensor(rf.get_store(), self.ctx)
 
     @_method_profile_logger
-    def get_all(self):
+    def get_all(self, options: dict = None):
+        if options is None:
+            options = {}
         fbs = self._rf.get_all()
-        start_coordinate = TensorBatch._str_to_int_tuple(fbs[0]._schema.metadata[TensorBatch.META_BLOCK_START_KEY])
-        end_coordinate = TensorBatch._str_to_int_tuple(fbs[-1]._schema.metadata[TensorBatch.META_BLOCK_END_KEY])
+        start_coordinate = TensorBatch._bytes_to_int_tuple(fbs[0]._schema.metadata[TensorBatch.META_BLOCK_START_KEY])
+        end_coordinate = TensorBatch._bytes_to_int_tuple(fbs[-1]._schema.metadata[TensorBatch.META_BLOCK_END_KEY])
         full_shape = tuple(np.add(np.subtract(end_coordinate, start_coordinate), (1, 1)))
 
         arrays = []
@@ -191,13 +213,48 @@ class RollTensor(object):
                                     others=others,
                                     options=options)
 
+    def __bin_op(self, other):
+        real_func_frame = inspect.currentframe().f_back
+        target_func_name = '_'.join([real_func_frame.f_code.co_name,
+                                     tensor_short_names[type(self).__qualname__],
+                                     tensor_short_names[type(other).__qualname__]])
+        return getattr(self, f'_{self.__class__.__name__}{target_func_name}')(other)
 
-class RollLocalTensor(object):
-    def __init__(self, data):
-        self._data = TensorBatch(data)
+    def __sub__(self, other):
+        return self.__bin_op(other)
 
-    def get_all(self):
-        return self._data
+    def __truediv__(self, other):
+        return self.__bin_op(other)
 
-    def to_numpy(self, reshape=True):
-        return self._data.to_numpy(reshape=reshape)
+    def __sub___dist_local(self, other: TensorBatch):
+        def _sub(task):
+            with create_adapter(task._inputs[0]) as input_adapter, \
+                    create_adapter(task._outputs[0]) as output_adapter:
+                for batch in input_adapter.read_all():
+                    tb = TensorBatch(batch)
+                    np_result = tb.to_numpy() - other.to_numpy()
+                    result = TensorBatch(data=np_result, block_start=tb._block_start, block_end=tb._block_end)
+                    output_adapter.write_all([result.to_frame()])
+
+            return task
+        result = self._rf.with_stores(func=_sub)
+
+        return RollTensor(er_store=result[0][1]._job._outputs[0], rt_ctx=self.ctx)
+
+    def __truediv___dist_local(self, other: TensorBatch):
+        def _truediv(task):
+            with create_adapter(task._inputs[0]) as input_adapter, \
+                    create_adapter(task._outputs[0]) as output_adapter:
+                for batch in input_adapter.read_all():
+                    tb = TensorBatch(batch)
+                    np_result = tb.to_numpy() / other.to_numpy()
+                    result = TensorBatch(data=np_result, block_start=tb._block_start, block_end=tb._block_end)
+                    output_adapter.write_all([result.to_frame()])
+            return task
+        result = self._rf.with_stores(func=_truediv)
+
+        return RollTensor(er_store=result[0][1]._job._outputs[0], rt_ctx=self.ctx)
+
+
+tensor_short_names = {RollTensor.__qualname__: "dist",
+                      TensorBatch.__qualname__: "local"}

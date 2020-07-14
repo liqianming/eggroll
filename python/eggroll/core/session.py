@@ -27,10 +27,9 @@ from eggroll.core.conf_keys import SessionConfKeys, ClusterManagerConfKeys
 from eggroll.core.constants import SessionStatus, ProcessorTypes, DeployModes
 from eggroll.core.meta_model import ErJob, ErTask
 from eggroll.core.meta_model import ErSessionMeta, ErPartition, ErStore
-from eggroll.core.utils import generate_task_id
+from eggroll.core.utils import generate_task_id, get_stack
 from eggroll.core.utils import get_self_ip, time_now, DEFAULT_DATETIME_FORMAT
-from eggroll.core.utils import get_stack
-from eggroll.core.utils import get_static_er_conf, set_static_er_conf
+from eggroll.core.utils import get_static_er_conf, set_static_er_conf, get_eggroll_home
 from eggroll.utils.log_utils import get_logger
 
 L = get_logger()
@@ -57,9 +56,7 @@ class ErSession(object):
         else:
             self.__session_id = session_id
 
-        self.__eggroll_home = os.getenv('EGGROLL_HOME', None)
-        if not self.__eggroll_home:
-            raise EnvironmentError('EGGROLL_HOME is not set')
+        self.__eggroll_home = get_eggroll_home()
 
         if "EGGROLL_DEBUG" not in os.environ:
             os.environ['EGGROLL_DEBUG'] = "0"

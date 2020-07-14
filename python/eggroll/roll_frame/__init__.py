@@ -80,27 +80,36 @@ class TensorBatch:
             options = dict()
 
         if isinstance(data, FrameBatch):
-            self._shape = [int(x) for x in str(data._schema.metadata[TensorBatch.META_SHAPE_KEY], encoding="utf8").split(",")]
+            self._shape = TensorBatch._bytes_to_int_tuple(data._schema.metadata[TensorBatch.META_SHAPE_KEY])
+            self._block_start = TensorBatch._bytes_to_int_tuple(data._schema.metadata[TensorBatch.META_BLOCK_START_KEY])
+            self._block_end = TensorBatch._bytes_to_int_tuple(data._schema.metadata[TensorBatch.META_BLOCK_END_KEY])
             self._data = pa.Tensor.from_numpy(data._data.to_pandas().to_numpy().reshape(self._shape))
         elif isinstance(data, np.ndarray):
             self._data = pa.Tensor.from_numpy(data)
             self._shape = self._data.shape
+            self._block_start = (0, 0) if block_start is None else block_start
+            self._block_end = data.shape if block_end is None else block_end
         else:
             self._data = data
             self._shape = data.shape
+            self._block_start = block_start
+            self._block_end = block_end
 
-        self._block_start = block_start
-        self._block_end = block_end
+    def __setstate__(self, state):
+        self.__init__(state[0], state[1])
+
+    def __getstate__(self):
+        return self._data.to_numpy(), self._shape
 
     @staticmethod
     def _int_tuple_to_str(t: tuple):
         return bytes(",".join(str(x) for x in t), encoding="utf8")
 
     @staticmethod
-    def _str_to_int_tuple(s: str):
+    def _bytes_to_int_tuple(s):
         return tuple(int(x) for x in s.decode(encoding="utf8").split(","))
 
-    def _generate_metadata(self):
+    def _get_metadata(self):
         result = {}
         result[TensorBatch.META_SHAPE_KEY] = TensorBatch._int_tuple_to_str(self._shape)
         if self._block_start is not None:
@@ -110,6 +119,9 @@ class TensorBatch:
             result[TensorBatch.META_BLOCK_END_KEY] = TensorBatch._int_tuple_to_str(self._block_end)
 
         return result
+
+    def _set_metadata(self):
+        pass
 
     def to_numpy(self, reshape=True) -> np.ndarray:
         result = self._data.to_numpy()
@@ -125,7 +137,7 @@ class TensorBatch:
     def to_frame(self):
         return FrameBatch(pa.RecordBatch.from_arrays(arrays=[self.to_numpy().reshape(-1)],
                                                      names=['__data'],
-                                                     metadata=self._generate_metadata()))
+                                                     metadata=self._get_metadata()))
 
     @staticmethod
     def from_frame(frame: FrameBatch):

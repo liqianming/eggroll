@@ -21,6 +21,7 @@ import sys
 from logging.handlers import TimedRotatingFileHandler
 from threading import RLock
 
+from eggroll.core.utils import get_eggroll_home
 from eggroll.utils import file_utils
 
 
@@ -52,7 +53,7 @@ class LoggerFactory(object):
     def get_logger(name):
         with LoggerFactory.lock:
             if not LoggerFactory.LOG_DIR:
-                LoggerFactory.LOG_DIR = os.environ.get('EGGROLL_LOGS_DIR', default=f'{os.environ["EGGROLL_HOME"]}/logs/eggroll')
+                LoggerFactory.LOG_DIR = os.environ.get('EGGROLL_LOGS_DIR', default=f'{get_eggroll_home()}/logs/eggroll')
                 os.makedirs(LoggerFactory.LOG_DIR, exist_ok=True)
             if name in LoggerFactory.name_to_loggers.keys():
                 logger, handler = LoggerFactory.name_to_loggers[name]
