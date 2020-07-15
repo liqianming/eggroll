@@ -78,9 +78,11 @@ class RollFrameContext(object):
     def populate_processor(self, store: ErStore):
         return self.__session.populate_processor(store)
 
-    def load(self, namespace=None, name=None, options: dict = None):
+    def load(self, name=None, namespace=None, options: dict = None):
         if options is None:
             options = {}
+        if not namespace:
+            namespace = self.session_id
         store_type = options.get('store_type', self.default_store_type)
         total_partitions = options.get('total_partitions', None)
         no_partitions_param = False
@@ -391,32 +393,22 @@ class RollFrame(object):
             result = merge_func(results.get() for _ in range(len(futures)))
         return result
 
+    def agg(self, func: Union[callable, str, list, dict], axis=0, *args, **kwargs):
+        def comb_op(iter):
+            result = None
+            for series in iter:
+                if result is None:
+                    result = series
+                else:
+                    result = pd.concat([result.to_frame().transpose(),
+                                        series.to_frame().transpose()])\
+                        .agg(func=func, axis=axis, *args, **kwargs)
+            return result
 
-    # def shuffle(self):
-    #     def _inner_shuffle(parts):
-    #         in_part, out_part = parts[0], parts[1]
-    #         with _create_store_adapter(in_part) as in_store, _create_store_adapter(out_part) as out_store:
-    #             # TODO: merge batch
-    #             input_store.write_all(TransferFrame.get(tag))
-    #             for frame in in_store.read_all():
-    #                 for batch in frame.split(by_column_value=True):
-    #                     route_to_egg = xx
-    #                     get_egg(route_to_egg).send(batch)
-    #     return self.with_stores(_inner_shuffle)
+        def seq_op(task):
+            with create_adapter(task._inputs[0]) as input_adapter:
+                return comb_op(batch.to_pandas().agg(func=func, axis=axis, *args, **kwargs) for batch in input_adapter.read_all())
 
+        result = self.with_stores(func=seq_op, merge_func=comb_op)
 
-# class RollTensor:
-#     def __init__(self):
-#         self.rf = None
-#
-#     def _bin_op(self, other, op):
-#         def _inner_bin_func(parts):
-#             in_part, out_part = parts[0], parts[1]
-#             with _create_store_adapter(in_part) as in_store, _create_store_adapter(out_part) as out_store:
-#                 x = x_store... numpy
-#                 y = y_store.. numpy
-#                 return op(x, y)
-#         self.rf.with_store(other.rf.store, func=xx)
-#
-#     def _add(self, other):
-#         return self._bin_op(other, operator.add)
+        return FrameBatch(result.to_frame().transpose())

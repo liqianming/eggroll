@@ -99,6 +99,19 @@ class TestRollFrameBase(unittest.TestCase):
         self.assertEqual(result['f_double'], 3.0)
         return result
 
+    def test_max_with_agg(self):
+        rf = self.ctx.load('test_rf_ns', f'test_rf_name_1')
+
+        result = rf.agg('max')
+
+        print(result.to_pandas())
+
+    def test_std_with_std(self):
+        rf = self.ctx.load('test_rf_ns', f'test_rf_name_1')
+
+        result = rf.agg('std')
+        print(result.to_pandas())
+
     def test_with_store(self):
         rf = self.ctx.load('test_rf_ns', f'test_rf_name_1', options={"total_partitions": 2})
 
