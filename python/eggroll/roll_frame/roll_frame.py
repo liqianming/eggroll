@@ -393,6 +393,39 @@ class RollFrame(object):
             result = merge_func(results.get() for _ in range(len(futures)))
         return result
 
+    def std(self, axis=0, *args, **kwargs):
+        def comb_op(partial_result):
+            sum_of_square = None
+            square_of_sum = None
+            total_rows = 0
+
+            for r in partial_result:
+                if sum_of_square is not None:
+                    sum_of_square = FrameBatch.concat([sum_of_square, r[0]]).to_pandas().sum()
+                    square_of_sum = FrameBatch.concat([square_of_sum, r[1]]).to_pandas().sum()
+                else:
+                    sum_of_square = FrameBatch(r[0])
+                    square_of_sum = FrameBatch(r[1])
+                total_rows += r[2][0]
+
+            sum_of_square = sum_of_square / total_rows
+            square_of_sum = (square_of_sum * square_of_sum) / (total_rows * total_rows)
+            result = (sum_of_square - square_of_sum) ** (1/2)
+
+            return result
+
+        def seq_op(task):
+            with create_adapter(task._inputs[0]) as input_adapter:
+                for batch in input_adapter.read_all():
+                    pdb = batch.to_pandas()
+                    sum_of_square = FrameBatch(pdb.pow(2).sum())
+                    sum_ = FrameBatch(pdb.sum())
+                    return (sum_of_square, sum_, pdb.shape)
+
+        result = self.with_stores(func=seq_op, merge_func=comb_op)
+
+        return FrameBatch(result)
+
     def agg(self, func: Union[callable, str, list, dict], axis=0, *args, **kwargs):
         def comb_op(iter):
             result = None
@@ -412,6 +445,12 @@ class RollFrame(object):
                             .agg(func=func, axis=axis, *args, **kwargs)
                         for batch in input_adapter.read_all())
 
-        result = self.with_stores(func=seq_op, merge_func=comb_op)
+        dir_self = dir(self)
+        if isinstance(func, str) and func in dir_self:
+            result = getattr(self, func)(axis=axis, *args, **kwargs)
+        if isinstance(func, list) and func[0] in dir_self:
+            result = getattr(self, func[0])(axis=axis, *args, **kwargs)
+        else:
+            result = self.with_stores(func=seq_op, merge_func=comb_op)
 
         return FrameBatch(result)
