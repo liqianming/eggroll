@@ -396,19 +396,22 @@ class RollFrame(object):
     def agg(self, func: Union[callable, str, list, dict], axis=0, *args, **kwargs):
         def comb_op(iter):
             result = None
-            for series in iter:
+            for seq_op_result in iter:
                 if result is None:
-                    result = series
+                    result = FrameBatch(seq_op_result)
                 else:
-                    result = pd.concat([result.to_frame().transpose(),
-                                        series.to_frame().transpose()])\
+                    result = FrameBatch.concat([result, FrameBatch(seq_op_result)])\
+                        .to_pandas()\
                         .agg(func=func, axis=axis, *args, **kwargs)
             return result
 
         def seq_op(task):
             with create_adapter(task._inputs[0]) as input_adapter:
-                return comb_op(batch.to_pandas().agg(func=func, axis=axis, *args, **kwargs) for batch in input_adapter.read_all())
+                return comb_op(
+                        batch.to_pandas()
+                            .agg(func=func, axis=axis, *args, **kwargs)
+                        for batch in input_adapter.read_all())
 
         result = self.with_stores(func=seq_op, merge_func=comb_op)
 
-        return FrameBatch(result.to_frame().transpose())
+        return FrameBatch(result)

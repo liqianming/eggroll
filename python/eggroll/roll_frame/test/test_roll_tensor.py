@@ -26,7 +26,7 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from eggroll.core.constants import StoreTypes
 from eggroll.core.utils import time_now
 from eggroll.core.session import ErSession
-from eggroll.roll_frame.test.roll_tensor_test_assets import get_debug_test_context
+from eggroll.roll_frame.test.roll_tensor_test_assets import get_rt_debug_test_context
 from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
 from eggroll.utils.log_utils import get_logger
 from eggroll.roll_frame import FrameBatch, TensorBatch
@@ -45,7 +45,7 @@ class TestRollTensorBase(unittest.TestCase):
     options_3p = {'total_partitions': 3}
 
     def setUp(self):
-        self.ctx = get_debug_test_context()
+        self.ctx = get_rt_debug_test_context()
 
     def tearDown(self) -> None:
         print("stop test session")

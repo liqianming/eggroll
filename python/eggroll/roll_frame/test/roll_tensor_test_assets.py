@@ -31,7 +31,7 @@ ER_STORE1 = ErStore(
                                      name="rt_name"))
 
 
-def get_debug_test_context(is_standalone=False, manager_port=4670, egg_port=20001, transfer_port=20002, session_id='testing'):
+def get_debug_session(is_standalone=False, manager_port=4670, egg_port=20001, transfer_port=20002, session_id='testing'):
     manager_port = manager_port
     egg_ports = [egg_port]
     egg_transfer_ports = [transfer_port]
@@ -62,6 +62,20 @@ def get_debug_test_context(is_standalone=False, manager_port=4670, egg_port=2000
     session = ErSession(session_id,
                         processors=[egg, roll],
                         options=options)
+    return session
+
+
+def get_rf_debug_test_context(is_standalone=False, manager_port=4670, egg_port=20001, transfer_port=20002, session_id='testing'):
+    session = get_debug_session(is_standalone=is_standalone, manager_port=manager_port, egg_port=egg_port, transfer_port=transfer_port, session_id=session_id)
+    context = RollFrameContext(session)
+
+    return context
+
+
+def get_rt_debug_test_context(is_standalone=False, manager_port=4670, egg_port=20001, transfer_port=20002, session_id='testing'):
+    session = get_debug_session(is_standalone=is_standalone, manager_port=manager_port, egg_port=egg_port, transfer_port=transfer_port, session_id=session_id)
     context = RollTensorContext(session)
 
     return context
+
+

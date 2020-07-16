@@ -41,12 +41,19 @@ class FrameBatch:
             fb = pa.RecordBatch.from_pandas(data)
             self._data = fb
             self._schema = fb.schema
+        elif isinstance(data, pd.Series):
+            fb = pa.RecordBatch.from_pandas(data.to_frame().transpose())
+            self._data = fb
+            self._schema = fb.schema
         elif isinstance(data, pa.RecordBatch):
             self._data = data
             self._schema = data.schema
         else:
             self._data = data
             self._schema = schema
+
+    def __getitem__(self, item):
+        return self.to_pandas().__getitem__(item)
 
     def to_pandas(self):
         return self._data.to_pandas()
