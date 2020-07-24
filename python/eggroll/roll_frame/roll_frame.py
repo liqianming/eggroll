@@ -390,67 +390,87 @@ class RollFrame(object):
                         lambda r: results.put(
                                 self.functor_serdes.deserialize(
                                         r.result()[0]._value)))
-            result = merge_func(results.get() for _ in range(len(futures)))
+
+            def yield_seq_op_results(queue, count):
+                for _ in range(count):
+                    yield queue.get()
+
+            result = merge_func(
+                    yield_seq_op_results(queue=results, count=len(futures)))
         return result
 
-    def std(self, axis=0, *args, **kwargs):
-        def comb_op(partial_result):
-            sum_of_square = None
-            square_of_sum = None
-            total_rows = 0
+    def agg(self, func: Union[callable, str, list, dict], axis=0, *args, **kwargs):
+        def do_call(var_dict, prefix, target):
+            call_result = None
+            if isinstance(func, str):
+                _f_name = f'{func}_{prefix}_op'
+                _f = var_dict.get(_f_name, var_dict[f'default_{prefix}_op'])
+                call_result = _f(target)
+            elif isinstance(func, list):
+                _f_name = f'{func[0]}_{prefix}_op'
+                _f = var_dict.get(_f_name, var_dict[f'default_{prefix}_op'])
+                call_result = _f(target)
+            else:
+                raise NotImplementedError()
 
-            for r in partial_result:
-                if sum_of_square is not None:
-                    sum_of_square = FrameBatch.concat([sum_of_square, r[0]]).to_pandas().sum()
-                    square_of_sum = FrameBatch.concat([square_of_sum, r[1]]).to_pandas().sum()
-                else:
-                    sum_of_square = FrameBatch(r[0])
-                    square_of_sum = FrameBatch(r[1])
-                total_rows += r[2][0]
+            return call_result
 
-            sum_of_square = sum_of_square / total_rows
-            square_of_sum = (square_of_sum * square_of_sum) / (total_rows * total_rows)
-            result = (sum_of_square - square_of_sum) ** (1/2)
+        def comb_op(it):
+            def default_comb_op(it_inner):
+                result = None
+                for seq_op_result in it_inner:
+                    if result is None:
+                        result = FrameBatch(seq_op_result)
+                    else:
+                        result = FrameBatch.concat([result, FrameBatch(seq_op_result)])\
+                            .to_pandas()\
+                            .agg(func=func, axis=axis, *args, **kwargs)
+                return result
 
-            return result
+            def std_comb_op(it_inner):
+                sum_of_square = None
+                square_of_sum = None
+                total_rows = 0
+
+                for r in it_inner:
+                    if sum_of_square is not None:
+                        sum_of_square = pd.concat([sum_of_square, r['sum_of_square'][0]]).sum()
+                        square_of_sum = pd.concat([square_of_sum, r['sum'][0]]).sum()
+                    else:
+                        sum_of_square = r['sum_of_square'][0]
+                        square_of_sum = r['sum'][0]
+                    total_rows += r['shape'][0][0]
+
+                sum_of_square = sum_of_square / total_rows
+                square_of_sum = (square_of_sum * square_of_sum) / (total_rows * total_rows)
+                result = (sum_of_square - square_of_sum) ** (1/2)
+
+                return result
+
+            return do_call(locals(), 'comb', it)
 
         def seq_op(task):
-            with create_adapter(task._inputs[0]) as input_adapter:
-                for batch in input_adapter.read_all():
-                    pdb = batch.to_pandas()
-                    sum_of_square = FrameBatch(pdb.pow(2).sum())
-                    sum_ = FrameBatch(pdb.sum())
-                    return (sum_of_square, sum_, pdb.shape)
+            def default_seq_op(task_inner):
+                with create_adapter(task_inner._inputs[0]) as input_adapter:
+                    return comb_op(
+                            batch.to_pandas()
+                                .agg(func=func, axis=axis, *args, **kwargs)
+                            for batch in input_adapter.read_all())
+
+            def std_seq_op(task_inner):
+                with create_adapter(task_inner._inputs[0]) as input_adapter:
+                    for batch in input_adapter.read_all():
+                        pdb = batch.to_pandas()
+                        sum_of_square = FrameBatch(pdb.pow(2).sum())
+                        sum_ = FrameBatch(pdb.sum())
+                        return pd.DataFrame.from_dict({'sum_of_square': [sum_of_square.to_pandas()], 'sum': [sum_.to_pandas()], 'shape': [pdb.shape]})
+
+                result = self.with_stores(func=seq_op, merge_func=comb_op)
+
+                return FrameBatch(result)
+
+            return do_call(locals(), 'seq', task)
 
         result = self.with_stores(func=seq_op, merge_func=comb_op)
-
-        return FrameBatch(result)
-
-    def agg(self, func: Union[callable, str, list, dict], axis=0, *args, **kwargs):
-        def comb_op(iter):
-            result = None
-            for seq_op_result in iter:
-                if result is None:
-                    result = FrameBatch(seq_op_result)
-                else:
-                    result = FrameBatch.concat([result, FrameBatch(seq_op_result)])\
-                        .to_pandas()\
-                        .agg(func=func, axis=axis, *args, **kwargs)
-            return result
-
-        def seq_op(task):
-            with create_adapter(task._inputs[0]) as input_adapter:
-                return comb_op(
-                        batch.to_pandas()
-                            .agg(func=func, axis=axis, *args, **kwargs)
-                        for batch in input_adapter.read_all())
-
-        dir_self = dir(self)
-        if isinstance(func, str) and func in dir_self:
-            result = getattr(self, func)(axis=axis, *args, **kwargs)
-        if isinstance(func, list) and func[0] in dir_self:
-            result = getattr(self, func[0])(axis=axis, *args, **kwargs)
-        else:
-            result = self.with_stores(func=seq_op, merge_func=comb_op)
 
         return FrameBatch(result)

@@ -33,12 +33,14 @@ L = get_logger()
 
 
 class TestRollFrameBase(unittest.TestCase):
+    df2 = pd.DataFrame.from_dict({"f_int": [1, 2, 3], "f_double": [1.0, 2.0, 3.0]})
     df3 = pd.DataFrame.from_dict({"f_int": [1, 2, 3], "f_double": [1.0, 2.0, 3.0], "f_str": ["str1", None, "str3"], "f_none": [None, None, None]})
     df4 = pd.DataFrame.from_dict({"f_int": [-3, 0, 6, 4], "f_double": [-1.0, 2.0, 3.0, 2.4], "f_str": ["str4", None, "str3", "str6"], "f_none": [None, None, None, None]})
 
     def setUp(self):
         self.ctx = get_debug_test_context()
         self.namespace = 'test_rf_ns'
+        self.name_2p_numeric = "test_rf_name_2p_numeric"
         self.name_1p = 'test_rf_name_1p'
         self.name_2p = 'test_rf_name_2p'
 
@@ -47,6 +49,9 @@ class TestRollFrameBase(unittest.TestCase):
         # self.ctx.get_session().stop()
 
     def test_put_all(self):
+        rf = self.ctx.load(name=self.name_2p_numeric, namespace=self.namespace, options={"total_partitions": 2})
+        rf.put_all(self.df2)
+
         rf = self.ctx.load(name=self.name_2p, namespace=self.namespace, options={"total_partitions": 2})
         rf.put_all(self.df3)
 
@@ -123,8 +128,8 @@ class TestRollFrameBase(unittest.TestCase):
     def test_max_with_agg_1p(self):
         rf = self.ctx.load(name=self.name_1p, namespace=self.namespace)
 
-    def test_std_with_std(self):
-        rf = self.ctx.load(name=self.name_2p, namespace=self.namespace)
+    def test_std_with_agg(self):
+        rf = self.ctx.load(name=self.name_2p_numeric, namespace=self.namespace)
 
         result = rf.agg('std')
         print(result.to_pandas())
