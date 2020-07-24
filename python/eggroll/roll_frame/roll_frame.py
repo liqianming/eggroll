@@ -434,16 +434,17 @@ class RollFrame(object):
 
                 for r in it_inner:
                     if sum_of_square is not None:
-                        sum_of_square = pd.concat([sum_of_square, r['sum_of_square'][0]]).sum()
-                        square_of_sum = pd.concat([square_of_sum, r['sum'][0]]).sum()
+                        sum_of_square = FrameBatch(pd.concat([sum_of_square, r['sum_of_square'][0]]).sum()).to_pandas()
+                        square_of_sum = FrameBatch(pd.concat([square_of_sum, r['sum'][0]]).sum()).to_pandas()
                     else:
                         sum_of_square = r['sum_of_square'][0]
                         square_of_sum = r['sum'][0]
                     total_rows += r['shape'][0][0]
 
-                sum_of_square = sum_of_square / total_rows
-                square_of_sum = (square_of_sum * square_of_sum) / (total_rows * total_rows)
-                result = (sum_of_square - square_of_sum) ** (1/2)
+                total_rows -= 1     # pandas uses unbias stdev - TODO:1: should support both by using param
+                sum_of_square = FrameBatch(sum_of_square / total_rows)
+                square_of_sum = FrameBatch((square_of_sum * square_of_sum) / (total_rows * total_rows))
+                result = (sum_of_square.to_pandas() - square_of_sum.to_pandas()) ** (1/2)
 
                 return result
 
@@ -464,8 +465,6 @@ class RollFrame(object):
                         sum_of_square = FrameBatch(pdb.pow(2).sum())
                         sum_ = FrameBatch(pdb.sum())
                         return pd.DataFrame.from_dict({'sum_of_square': [sum_of_square.to_pandas()], 'sum': [sum_.to_pandas()], 'shape': [pdb.shape]})
-
-                result = self.with_stores(func=seq_op, merge_func=comb_op)
 
                 return FrameBatch(result)
 

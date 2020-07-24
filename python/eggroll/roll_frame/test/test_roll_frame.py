@@ -131,7 +131,7 @@ class TestRollFrameBase(unittest.TestCase):
     def test_std_with_agg(self):
         rf = self.ctx.load(name=self.name_2p_numeric, namespace=self.namespace)
 
-        result = rf.agg('std')
+        result = rf.agg(['std'])
         print(result.to_pandas())
 
     def test_with_store(self):
