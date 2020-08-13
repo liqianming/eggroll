@@ -428,17 +428,16 @@ class RollFrame(object):
                         square_of_sum = r['sum'][0]
                     total_rows += r['shape'][0][0]
 
-                if is_last:
+                if not is_last:
+                    cur_status['sum_of_square'] = sum_of_square
+                    cur_status['square_of_sum'] = square_of_sum
+                    cur_status['total_rows'] = total_rows
+                    result = cur_status
+                else:
                     total_rows -= 1     # pandas uses unbias stdev - TODO:1: should support both by using param
                     sum_of_square = FrameBatch(sum_of_square / total_rows)
                     square_of_sum = FrameBatch((square_of_sum * square_of_sum) / (total_rows * total_rows))
                     result = FrameBatch((sum_of_square.to_pandas() - square_of_sum.to_pandas()) ** (1/2))
-                else:
-                    cur_status['sum_of_square'] = sum_of_square
-                    cur_status['square_of_sum'] = square_of_sum
-                    cur_status['total_rows'] = total_rows
-
-                    result = cur_status
 
                 return result
 
@@ -510,10 +509,11 @@ class RollFrame(object):
                     batch_result['partition_id'] = task._inputs[0]._id
                     batch_result['batch_id'] = batch_id
                     batch_id += 1
+
+                    pd_batch = batch.to_pandas()
                     for f in final_func:
                         _f = get_agg_inner_func(f, prefix, var_dict)
 
-                        pd_batch = batch.to_pandas()
                         _f_result = _f(pd_batch, f)
                         batch_result[f] = _f_result
                     seq_result.append(batch_result)
