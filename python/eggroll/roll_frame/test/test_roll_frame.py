@@ -125,6 +125,11 @@ class TestRollFrameBase(unittest.TestCase):
     def test_max_with_agg_1p(self):
         rf = self.ctx.load(name=self.name_1p, namespace=self.namespace)
 
+    def test_std_with_agg(self):
+        rf = self.ctx.load(name=self.name_2p_numeric, namespace=self.namespace)
+        result = rf.agg('std')
+        print(result.to_pandas())
+
     def test_agg(self):
         rf = self.ctx.load(name=self.name_2p_numeric, namespace=self.namespace)
 

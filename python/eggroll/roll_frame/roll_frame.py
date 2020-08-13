@@ -391,8 +391,15 @@ class RollFrame(object):
         return result
 
     def agg(self, func: Union[callable, str, list, dict], axis=0, *args, **kwargs):
+        def get_agg_sub_func(f_name, prefix, var_dict):
+            _f_op_name = f'{f_name}_{prefix}_op'
+            _f = var_dict.get(_f_op_name, None)
+            if not _f:
+                raise NotImplementedError(f'{func} not supported')
+            return _f
+
         def comb_op(it):
-            def default_comb_op(cur_result, seq_result, agg_func_name, is_last=False):
+            def idempotent_comb_op(cur_result, seq_result, agg_func_name, is_last=False):
                 result = cur_result.get(agg_func_name, None)
 
                 for batch in seq_result:
@@ -435,8 +442,8 @@ class RollFrame(object):
 
                 return result
 
-            max_comb_op = default_comb_op
-            min_comb_op = default_comb_op
+            max_comb_op = idempotent_comb_op
+            min_comb_op = idempotent_comb_op
 
             prefix = 'comb'
             var_dict = locals()
@@ -451,22 +458,16 @@ class RollFrame(object):
             cur_result = dict()
             prev_seq_result = None
             for seq_result in it:
-                for f in func:
-                    _f_name = f'{f}_{prefix}_op'
-                    _f = var_dict.get(_f_name, None)
-                    if not _f:
-                        raise NotImplementedError(f'{func} not supported')
+                for f in final_func:
+                    _f = get_agg_sub_func(f, prefix, var_dict)
 
                     if prev_seq_result:
                         cur_result[f] = _f(cur_result, prev_seq_result, f, False)
                 prev_seq_result = seq_result
 
             # last
-            for f in func:
-                _f_name = f'{f}_{prefix}_op'
-                _f = var_dict.get(_f_name, None)
-                if not _f:
-                    raise NotImplementedError(f'{func} not supported')
+            for f in final_func:
+                _f = get_agg_sub_func(f, prefix, var_dict)
                 cur_result[f] = _f(cur_result, prev_seq_result, f, True)
 
             result: pd.DataFrame = None
@@ -479,7 +480,7 @@ class RollFrame(object):
             return FrameBatch(result)
 
         def seq_op(task):
-            def default_seq_op(pd_batch, agg_func_name):
+            def idempotent_seq_op(pd_batch, agg_func_name):
                 return FrameBatch(pd_batch.agg(
                                 func=agg_func_name, axis=axis, *args, **kwargs)).to_pandas()
 
@@ -488,8 +489,8 @@ class RollFrame(object):
                 sum_ = FrameBatch(pd_batch.sum())
                 return pd.DataFrame.from_dict({'sum_of_square': [sum_of_square.to_pandas()], 'sum': [sum_.to_pandas()], 'shape': [pd_batch.shape]})
 
-            max_seq_op = default_seq_op
-            min_seq_op = default_seq_op
+            max_seq_op = idempotent_seq_op
+            min_seq_op = idempotent_seq_op
 
             prefix = 'seq'
             var_dict = locals()
@@ -509,11 +510,9 @@ class RollFrame(object):
                     batch_result['partition_id'] = task._inputs[0]._id
                     batch_result['batch_id'] = batch_id
                     batch_id += 1
-                    for f in func:
-                        _f_name = f'{f}_{prefix}_op'
-                        _f = var_dict.get(_f_name, None)
-                        if not _f:
-                            raise NotImplementedError(f'{func} not supported')
+                    for f in final_func:
+                        _f = get_agg_sub_func(f, prefix, var_dict)
+
                         pd_batch = batch.to_pandas()
                         _f_result = _f(pd_batch, f)
                         batch_result[f] = _f_result
