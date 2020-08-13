@@ -391,7 +391,7 @@ class RollFrame(object):
         return result
 
     def agg(self, func: Union[callable, str, list, dict], axis=0, *args, **kwargs):
-        def get_agg_sub_func(f_name, prefix, var_dict):
+        def get_agg_inner_func(f_name, prefix, var_dict):
             _f_op_name = f'{f_name}_{prefix}_op'
             _f = var_dict.get(_f_op_name, None)
             if not _f:
@@ -458,16 +458,16 @@ class RollFrame(object):
             cur_result = dict()
             prev_seq_result = None
             for seq_result in it:
-                for f in final_func:
-                    _f = get_agg_sub_func(f, prefix, var_dict)
+                if prev_seq_result:
+                    for f in final_func:
+                        _f = get_agg_inner_func(f, prefix, var_dict)
 
-                    if prev_seq_result:
                         cur_result[f] = _f(cur_result, prev_seq_result, f, False)
                 prev_seq_result = seq_result
 
             # last
             for f in final_func:
-                _f = get_agg_sub_func(f, prefix, var_dict)
+                _f = get_agg_inner_func(f, prefix, var_dict)
                 cur_result[f] = _f(cur_result, prev_seq_result, f, True)
 
             result: pd.DataFrame = None
@@ -511,7 +511,7 @@ class RollFrame(object):
                     batch_result['batch_id'] = batch_id
                     batch_id += 1
                     for f in final_func:
-                        _f = get_agg_sub_func(f, prefix, var_dict)
+                        _f = get_agg_inner_func(f, prefix, var_dict)
 
                         pd_batch = batch.to_pandas()
                         _f_result = _f(pd_batch, f)
