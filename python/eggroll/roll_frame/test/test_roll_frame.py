@@ -14,20 +14,17 @@
 #
 #
 
-import pandas as pd
-import pyarrow as pa
-import unittest
 import threading
 import time
+import unittest
 
-from concurrent.futures.thread import ThreadPoolExecutor
+import pandas as pd
 
-from eggroll.core.constants import StoreTypes
-from eggroll.core.utils import time_now
-from eggroll.roll_frame.test.roll_frame_test_assets import get_debug_test_context
-from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
-from eggroll.utils.log_utils import get_logger
 from eggroll.roll_frame import FrameBatch
+from eggroll.roll_frame.frame_store import create_adapter
+from eggroll.roll_frame.test.roll_frame_test_assets import \
+    get_debug_test_context
+from eggroll.utils.log_utils import get_logger
 
 L = get_logger()
 
@@ -128,11 +125,13 @@ class TestRollFrameBase(unittest.TestCase):
     def test_max_with_agg_1p(self):
         rf = self.ctx.load(name=self.name_1p, namespace=self.namespace)
 
-    def test_std_with_agg(self):
+    def test_agg(self):
         rf = self.ctx.load(name=self.name_2p_numeric, namespace=self.namespace)
 
-        result = rf.agg(['std'])
+        print(rf.get_all().to_pandas())
+        result = rf.agg(['std', 'max', 'min'])
         print(result.to_pandas())
+        print('-------------')
 
     def test_with_store(self):
         rf = self.ctx.load(name=self.name_2p, namespace=self.namespace)

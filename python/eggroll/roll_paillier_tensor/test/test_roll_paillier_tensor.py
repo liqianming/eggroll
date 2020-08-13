@@ -19,7 +19,7 @@ import unittest
 from eggroll.core.command.command_model import ErCommandRequest
 from eggroll.core.meta_model import ErStoreLocator, ErJob, ErStore, ErFunctor
 from eggroll.core.proto import command_pb2_grpc
-from eggroll.core.serdes import cloudpickle
+#from eggroll.core.serdes import cloudpickle
 from eggroll.roll_paillier_tensor.roll_paillier_tensor import RollPaillierTensor as rpt
 
 from eggroll.core.session import ErSession

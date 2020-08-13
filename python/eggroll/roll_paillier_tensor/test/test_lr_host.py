@@ -4,7 +4,6 @@ import unittest
 from eggroll.core.command.command_model import ErCommandRequest
 from eggroll.core.meta_model import ErStoreLocator, ErJob, ErStore, ErFunctor
 from eggroll.core.proto import command_pb2_grpc
-from eggroll.core.serdes import cloudpickle
 from eggroll.core.constants import StoreTypes
 
 ##### RollPaillierTensor
