@@ -134,7 +134,7 @@ class TestRollFrameBase(unittest.TestCase):
         rf = self.ctx.load(name=self.name_2p_numeric, namespace=self.namespace)
 
         print(rf.get_all().to_pandas())
-        result = rf.agg(['std', 'max', 'min'])
+        result = rf.agg(['std', 'max', 'min', 'count'])
         print(result.to_pandas())
         print('-------------')
 

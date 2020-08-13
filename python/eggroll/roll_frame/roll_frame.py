@@ -441,6 +441,21 @@ class RollFrame(object):
 
                 return result
 
+            def count_comb_op(cur_result, seq_result, agg_func_name, is_last=False):
+                result = cur_result.get(agg_func_name, None)
+
+                for batch in seq_result:
+                    r = batch[agg_func_name]
+                    if result is not None:
+                        result = FrameBatch(FrameBatch.concat([result, FrameBatch(r)]) \
+                                            .to_pandas() \
+                                            .agg(func='sum', axis=axis, *args, **kwargs))
+                    else:
+                        result = FrameBatch(r)
+
+                return result
+
+
             max_comb_op = idempotent_comb_op
             min_comb_op = idempotent_comb_op
 
@@ -490,6 +505,7 @@ class RollFrame(object):
 
             max_seq_op = idempotent_seq_op
             min_seq_op = idempotent_seq_op
+            count_seq_op = idempotent_seq_op
 
             prefix = 'seq'
             var_dict = locals()
