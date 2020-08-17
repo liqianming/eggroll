@@ -13,6 +13,8 @@
 #  limitations under the License.
 #
 #
+import hashlib
+import operator
 
 import pandas as pd
 import pyarrow as pa
@@ -22,12 +24,17 @@ import time
 
 from concurrent.futures.thread import ThreadPoolExecutor
 
+from Cryptodome import Random
+from Cryptodome.PublicKey import RSA
+
 from eggroll.core.constants import StoreTypes
+from eggroll.core.meta_model import ErStore
 from eggroll.core.utils import time_now
+from eggroll.roll_frame.roll_frame import RollFrame
 from eggroll.roll_frame.test.roll_frame_test_assets import get_debug_test_context
 from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
 from eggroll.utils.log_utils import get_logger
-from eggroll.roll_frame import FrameBatch
+from eggroll.roll_frame import FrameBatch, create_functor
 
 L = get_logger()
 
@@ -48,6 +55,11 @@ class TestRollFrameBase(unittest.TestCase):
         print("stop test session")
         # self.ctx.get_session().stop()
 
+    def test_parallelize(self):
+        rf = self.ctx.parallelize(self.df2, options={'total_partitions': 3})
+        print(rf.get_name(), rf.get_namespace())
+        print(rf.get_all().to_pandas())
+
     def test_put_all(self):
         rf = self.ctx.load(name=self.name_2p_numeric, namespace=self.namespace, options={"total_partitions": 2})
         rf.put_all(self.df2)
@@ -57,6 +69,47 @@ class TestRollFrameBase(unittest.TestCase):
 
         rf = self.ctx.load(name=self.name_1p, namespace=self.namespace, options={"total_partitions": 1})
         rf.put_all(self.df3)
+
+    @staticmethod
+    def __hash(x):
+        return int(hashlib.sha256(bytes(str(x), encoding='utf-8')).hexdigest()[:8], base=16)
+
+    def test_hash(self):
+        def hash_frame(task):
+            with create_adapter(task._inputs[0]) as input_adapter, create_adapter(task._outputs[0]) as output_adapter:
+                for batch in input_adapter.read_all():
+                    print(f"batch={batch.to_pandas()}")
+                    if not batch.to_pandas().empty:
+                        print(f"start write data={batch.to_pandas().applymap(TestRollFrameBase.__hash)}")
+                        output_adapter.write_all([batch.to_pandas().applymap(TestRollFrameBase.__hash)])
+                    else:
+                        output_adapter.write_all(pd.DataFrame(data=None))
+
+        rf = self.ctx.load(name=self.name_2p_numeric+"_hash", namespace=self.namespace, options={"total_partitions": 1})
+        rf.put_all(self.df2)
+        rf.with_stores(hash_frame)
+
+    def test_mul(self):
+        df1 = pd.DataFrame.from_dict({"f_int": [1, 2, 3], "f_double": [1.0, 2.0, 3.0]})
+        df2 = pd.DataFrame.from_dict({"f_int": [1, 2, 3], "f_double": [1.0, 2.0, 3.0]})
+        rf1 = self.ctx.load(name="mul_self", namespace=self.namespace, options={"total_partitions": 1})
+        rf1.put_all(df1)
+        rf2 = self.ctx.load(name="mul_other", namespace=self.namespace, options={"total_partitions": 1})
+        rf2.put_all(df2)
+        rf2_data = rf2.get_all().to_pandas()
+        import operator
+        def multiply_wrapper(task):
+            with create_adapter(task._inputs[0]) as input_adapter, create_adapter(task._outputs[0]) as output_adapter:
+                for batch in input_adapter.read_all():
+                    print(f"batch={batch.to_pandas()}")
+                    if not batch.to_pandas().empty:
+                        mul_res = operator.mul(batch.to_pandas(), rf2_data)
+                        output_adapter.write_all([mul_res])
+                    else:
+                        output_adapter.write_all(pd.DataFrame(data=None))
+                return task._outputs[0]
+        res = rf1.with_stores(multiply_wrapper)
+        print(self.ctx.load(namespace=res[0][1]._store_locator._namespace, name=res[0][1]._store_locator._name).get_all().to_pandas())
 
     def test_get_all(self):
         rf = self.ctx.load(name=self.name_2p, namespace=self.namespace)
@@ -113,7 +166,7 @@ class TestRollFrameBase(unittest.TestCase):
 
     def test_max_with_agg_2p(self):
         rf = self.ctx.load(name=self.name_2p, namespace=self.namespace)
-
+        print(rf.get_all().to_pandas())
         result = rf.agg('max')
 
         print(result.to_pandas())

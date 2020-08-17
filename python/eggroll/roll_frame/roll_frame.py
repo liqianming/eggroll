@@ -42,7 +42,7 @@ from eggroll.utils.log_utils import get_logger
 import pandas as pd
 import numpy as np
 import pyarrow as pa
-from eggroll.roll_frame import FrameBatch
+from eggroll.roll_frame import FrameBatch, create_functor
 from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
 from eggroll.roll_frame.transfer_frame import TransferFrame
 from eggroll.core.transfer.transfer_service import TransferClient, TransferService
@@ -180,6 +180,18 @@ class RollFrame(object):
 
     def __getstate__(self):
         pass
+
+    def __getitem__(self, item):
+        if isinstance(item, set):
+            item = list(item)
+        elif isinstance(item, str):
+            item = [item]
+
+        if not isinstance(item, list):
+            raise NotImplementedError(f"item={item}, type={type(item)}")
+        loc_data = self.get_all()[item]
+        roll_frame = self.ctx.parallelize(loc_data)
+        return roll_frame
 
     def __init__(self, er_store: ErStore, rf_ctx: RollFrameContext):
         if not rf_ctx:
@@ -372,6 +384,7 @@ class RollFrame(object):
         job = ErJob(id=job_id,
                     name=RollFrame.WITH_STORES,
                     inputs=[self.ctx.populate_processor(s.get_store()) for s in [self] + others],
+                    outputs=[],
                     functors=[ErFunctor(name=RollFrame.WITH_STORES, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(func))],
                     options=options)
 
