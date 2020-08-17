@@ -12,43 +12,34 @@
 #  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
-import operator
-import os
 import uuid
-from concurrent.futures import wait, FIRST_EXCEPTION
 from queue import Queue
-from threading import Thread
 from typing import Iterable, Union
+
+import cloudpickle
+import pandas as pd
+import pyarrow as pa
 
 from eggroll.core.aspects import _method_profile_logger, _method_error_logger
 from eggroll.core.client import CommandClient
 from eggroll.core.command.command_model import CommandURI
-from eggroll.core.conf_keys import SessionConfKeys, RollPairConfKeys
+from eggroll.core.conf_keys import SessionConfKeys
 from eggroll.core.constants import StoreTypes, SerdesTypes, PartitionerTypes, \
     SessionStatus
 from eggroll.core.datastructure.broker import FifoBroker
-from eggroll.core.io.io_utils import get_db_path
 from eggroll.core.meta_model import ErStoreLocator, ErJob, ErStore, ErFunctor, \
     ErTask, ErPair, ErPartition
-from eggroll.core.serdes import cloudpickle
+from eggroll.core.serdes.eggroll_serdes import DefaultArrowSerdes
 from eggroll.core.session import ErSession
+from eggroll.core.transfer.transfer_service import TransferClient, \
+    TransferService
 from eggroll.core.utils import generate_job_id, generate_task_id
-from eggroll.core.utils import string_to_bytes, hash_code
+from eggroll.core.utils import hash_code
+from eggroll.roll_frame import FrameBatch
+from eggroll.roll_frame.frame_store import create_adapter
 from eggroll.roll_pair import create_serdes
-from eggroll.roll_pair.transfer_pair import TransferPair, BatchBroker
-from eggroll.roll_pair.utils.gc_utils import GcRecorder
 from eggroll.roll_pair.utils.pair_utils import partitioner
 from eggroll.utils.log_utils import get_logger
-import pandas as pd
-import numpy as np
-import pyarrow as pa
-from eggroll.roll_frame import FrameBatch, create_functor
-from eggroll.roll_frame.frame_store import create_frame_adapter, create_adapter
-from eggroll.roll_frame.transfer_frame import TransferFrame
-from eggroll.core.transfer.transfer_service import TransferClient, TransferService
-from eggroll.core.utils import generate_job_id, generate_task_id
-from eggroll.core.serdes.eggroll_serdes import DefaultArrowSerdes
-
 
 L = get_logger()
 
@@ -100,13 +91,13 @@ class RollFrameContext(object):
         # TODO:0: add 'error_if_exist, persistent / default store type'
         L.info("final_options:{}".format(final_options))
         store = ErStore(
-            store_locator=ErStoreLocator(
-                store_type=store_type,
-                namespace=namespace,
-                name=name,
-                total_partitions=total_partitions,
-                partitioner=partitioner),
-            options=final_options)
+                store_locator=ErStoreLocator(
+                        store_type=store_type,
+                        namespace=namespace,
+                        name=name,
+                        total_partitions=total_partitions,
+                        partitioner=partitioner),
+                options=final_options)
 
         if create_if_missing:
             result = self.__session._cluster_manager_client.get_or_create_store(store)
@@ -114,7 +105,7 @@ class RollFrameContext(object):
             result = self.__session._cluster_manager_client.get_store(store)
             if result is None:
                 raise EnvironmentError(
-                    "result is None, please check whether the store:{} has been created before".format(store))
+                        "result is None, please check whether the store:{} has been created before".format(store))
 
         if False and not no_partitions_param \
                 and result._store_locator._total_partitions != 0 \
@@ -220,9 +211,9 @@ class RollFrame(object):
         return self.__store._store_locator._store_type
 
     def _submit_job(self,
-                    job: ErJob,
-                    command_uri: CommandURI = RUN_TASK_URI,
-                    create_output_if_missing: bool = True):
+            job: ErJob,
+            command_uri: CommandURI = RUN_TASK_URI,
+            create_output_if_missing: bool = True):
         futures = self.ctx.get_session().submit_job(
                 job=job,
                 output_types=[ErPair],
@@ -239,13 +230,13 @@ class RollFrame(object):
         return results
 
     def _run_job(self,
-                 job: ErJob,
-                 command_uri: CommandURI = RUN_TASK_URI,
-                 create_output_if_missing: bool = True):
+            job: ErJob,
+            command_uri: CommandURI = RUN_TASK_URI,
+            create_output_if_missing: bool = True):
         futures = self._submit_job(
-            job=job,
-            command_uri=command_uri,
-            create_output_if_missing=create_output_if_missing)
+                job=job,
+                command_uri=command_uri,
+                create_output_if_missing=create_output_if_missing)
 
         return self._wait_job_finished(futures)
 
@@ -384,7 +375,6 @@ class RollFrame(object):
         job = ErJob(id=job_id,
                     name=RollFrame.WITH_STORES,
                     inputs=[self.ctx.populate_processor(s.get_store()) for s in [self] + others],
-                    outputs=[],
                     functors=[ErFunctor(name=RollFrame.WITH_STORES, serdes=SerdesTypes.CLOUD_PICKLE, body=cloudpickle.dumps(func))],
                     options=options)
 
@@ -413,39 +403,35 @@ class RollFrame(object):
         return result
 
     def agg(self, func: Union[callable, str, list, dict], axis=0, *args, **kwargs):
-        def do_call(var_dict, prefix, target):
-            call_result = None
-            if isinstance(func, str):
-                _f_name = f'{func}_{prefix}_op'
-                _f = var_dict.get(_f_name, var_dict[f'default_{prefix}_op'])
-                call_result = _f(target)
-            elif isinstance(func, list):
-                _f_name = f'{func[0]}_{prefix}_op'
-                _f = var_dict.get(_f_name, var_dict[f'default_{prefix}_op'])
-                call_result = _f(target)
-            else:
-                raise NotImplementedError()
-
-            return call_result
+        def get_agg_inner_func(f_name, prefix, var_dict):
+            _f_op_name = f'{f_name}_{prefix}_op'
+            _f = var_dict.get(_f_op_name, None)
+            if not _f:
+                raise NotImplementedError(f'{func} not supported')
+            return _f
 
         def comb_op(it):
-            def default_comb_op(it_inner):
-                result = None
-                for seq_op_result in it_inner:
-                    if result is None:
-                        result = FrameBatch(seq_op_result)
+            def idempotent_comb_op(cur_result, seq_result, agg_func_name, is_last=False):
+                result = cur_result.get(agg_func_name, None)
+
+                for batch in seq_result:
+                    r = batch[agg_func_name]
+                    if result is not None:
+                        result = FrameBatch(FrameBatch.concat([result, FrameBatch(r)]) \
+                            .to_pandas() \
+                            .agg(func=agg_func_name, axis=axis, *args, **kwargs))
                     else:
-                        result = FrameBatch.concat([result, FrameBatch(seq_op_result)])\
-                            .to_pandas()\
-                            .agg(func=func, axis=axis, *args, **kwargs)
+                        result = FrameBatch(r)
                 return result
 
-            def std_comb_op(it_inner):
-                sum_of_square = None
-                square_of_sum = None
-                total_rows = 0
+            def std_comb_op(cur_result, seq_result, agg_func_name, is_last=False):
+                cur_status = cur_result.get(agg_func_name, {'sum_of_square': None, 'square_of_sum': None, 'total_rows': 0})
+                sum_of_square = cur_status['sum_of_square']
+                square_of_sum = cur_status['square_of_sum']
+                total_rows = cur_status['total_rows']
 
-                for r in it_inner:
+                for batch in seq_result:
+                    r = batch[agg_func_name]
                     if sum_of_square is not None:
                         sum_of_square = FrameBatch(pd.concat([sum_of_square, r['sum_of_square'][0]]).sum()).to_pandas()
                         square_of_sum = FrameBatch(pd.concat([square_of_sum, r['sum'][0]]).sum()).to_pandas()
@@ -454,35 +440,114 @@ class RollFrame(object):
                         square_of_sum = r['sum'][0]
                     total_rows += r['shape'][0][0]
 
-                total_rows -= 1     # pandas uses unbias stdev - TODO:1: should support both by using param
-                sum_of_square = FrameBatch(sum_of_square / total_rows)
-                square_of_sum = FrameBatch((square_of_sum * square_of_sum) / (total_rows * total_rows))
-                result = (sum_of_square.to_pandas() - square_of_sum.to_pandas()) ** (1/2)
+                if not is_last:
+                    cur_status['sum_of_square'] = sum_of_square
+                    cur_status['square_of_sum'] = square_of_sum
+                    cur_status['total_rows'] = total_rows
+                    result = cur_status
+                else:
+                    total_rows -= 1     # pandas uses unbias stdev - TODO:1: should support both by using param
+                    sum_of_square = FrameBatch(sum_of_square / total_rows)
+                    square_of_sum = FrameBatch((square_of_sum * square_of_sum) / (total_rows * total_rows))
+                    result = FrameBatch((sum_of_square.to_pandas() - square_of_sum.to_pandas()) ** (1/2))
 
                 return result
 
-            return do_call(locals(), 'comb', it)
+            def count_comb_op(cur_result, seq_result, agg_func_name, is_last=False):
+                result = cur_result.get(agg_func_name, None)
+
+                for batch in seq_result:
+                    r = batch[agg_func_name]
+                    if result is not None:
+                        result = FrameBatch(FrameBatch.concat([result, FrameBatch(r)]) \
+                                            .to_pandas() \
+                                            .agg(func='sum', axis=axis, *args, **kwargs))
+                    else:
+                        result = FrameBatch(r)
+
+                return result
+
+
+            max_comb_op = idempotent_comb_op
+            min_comb_op = idempotent_comb_op
+
+            prefix = 'comb'
+            var_dict = locals()
+            final_func = None
+            if isinstance(func, str):
+                final_func = [func]
+            elif isinstance(func, list):
+                final_func = func
+            else:
+                raise NotImplementedError()
+
+            cur_result = dict()
+            prev_seq_result = None
+            for seq_result in it:
+                if prev_seq_result:
+                    for f in final_func:
+                        _f = get_agg_inner_func(f, prefix, var_dict)
+
+                        cur_result[f] = _f(cur_result, prev_seq_result, f, False)
+                prev_seq_result = seq_result
+
+            # last
+            for f in final_func:
+                _f = get_agg_inner_func(f, prefix, var_dict)
+                cur_result[f] = _f(cur_result, prev_seq_result, f, True)
+
+            result: pd.DataFrame = None
+            for k, v in cur_result.items():
+                r = v.to_pandas().rename(index={0: k})
+                if result is None:
+                    result = r
+                else:
+                    result = result.append(r)
+            return FrameBatch(result)
 
         def seq_op(task):
-            def default_seq_op(task_inner):
-                with create_adapter(task_inner._inputs[0]) as input_adapter:
-                    return comb_op(
-                            batch.to_pandas()
-                                .agg(func=func, axis=axis, *args, **kwargs)
-                            for batch in input_adapter.read_all())
+            def idempotent_seq_op(pd_batch, agg_func_name):
+                return FrameBatch(pd_batch.agg(
+                                func=agg_func_name, axis=axis, *args, **kwargs)).to_pandas()
 
-            def std_seq_op(task_inner):
-                with create_adapter(task_inner._inputs[0]) as input_adapter:
-                    for batch in input_adapter.read_all():
-                        pdb = batch.to_pandas()
-                        sum_of_square = FrameBatch(pdb.pow(2).sum())
-                        sum_ = FrameBatch(pdb.sum())
-                        return pd.DataFrame.from_dict({'sum_of_square': [sum_of_square.to_pandas()], 'sum': [sum_.to_pandas()], 'shape': [pdb.shape]})
+            def std_seq_op(pd_batch, agg_func_name):
+                sum_of_square = FrameBatch(pd_batch.pow(2).sum())
+                sum_ = FrameBatch(pd_batch.sum())
+                return pd.DataFrame.from_dict({'sum_of_square': [sum_of_square.to_pandas()], 'sum': [sum_.to_pandas()], 'shape': [pd_batch.shape]})
 
-                return FrameBatch(result)
+            max_seq_op = idempotent_seq_op
+            min_seq_op = idempotent_seq_op
+            count_seq_op = idempotent_seq_op
 
-            return do_call(locals(), 'seq', task)
+            prefix = 'seq'
+            var_dict = locals()
+            final_func = None
+            if isinstance(func, str):
+                final_func = [func]
+            elif isinstance(func, list):
+                final_func = func
+            else:
+                raise NotImplementedError()
+
+            seq_result = list()
+            with create_adapter(task._inputs[0]) as input_adapter:
+                batch_id = 0
+                for batch in input_adapter.read_all():
+                    batch_result = dict()
+                    batch_result['partition_id'] = task._inputs[0]._id
+                    batch_result['batch_id'] = batch_id
+                    batch_id += 1
+
+                    pd_batch = batch.to_pandas()
+                    for f in final_func:
+                        _f = get_agg_inner_func(f, prefix, var_dict)
+
+                        _f_result = _f(pd_batch, f)
+                        batch_result[f] = _f_result
+                    seq_result.append(batch_result)
+
+            return seq_result
 
         result = self.with_stores(func=seq_op, merge_func=comb_op)
 
-        return FrameBatch(result)
+        return result

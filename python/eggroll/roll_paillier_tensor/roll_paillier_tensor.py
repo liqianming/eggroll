@@ -8,7 +8,6 @@ from eggroll.core.constants import StoreTypes
 from eggroll.core.io.kv_adapter import RocksdbSortedKvAdapter
 from eggroll.core.meta_model import ErStoreLocator, ErJob, ErStore, ErFunctor
 from eggroll.core.proto import command_pb2_grpc
-from eggroll.core.serdes import cloudpickle
 from eggroll.roll_pair import create_serdes, create_adapter
 from eggroll.roll_pair.roll_pair import RollPair
 from eggroll.roll_pair.roll_pair import RollPairContext
