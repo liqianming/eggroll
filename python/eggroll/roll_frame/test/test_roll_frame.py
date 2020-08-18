@@ -14,24 +14,28 @@
 #
 #
 import hashlib
-import operator
+import numpy as np
 
 import threading
 import time
 import unittest
 
 import pandas as pd
+from Cryptodome import Random
+from Cryptodome.PublicKey import RSA
 
 from eggroll.roll_frame import FrameBatch
 from eggroll.roll_frame.frame_store import create_adapter
 from eggroll.roll_frame.test.roll_frame_test_assets import \
     get_debug_test_context
 from eggroll.utils.log_utils import get_logger
+from fate_script.contract.secureprotol import gmpy_math
 
 L = get_logger()
 
 
 class TestRollFrameBase(unittest.TestCase):
+    df1 = pd.DataFrame.from_dict({"xc1": [0, 1, 2, 3], "xc2": ['a', 'b', 'c', 'd']})
     df2 = pd.DataFrame.from_dict({"f_int": [1, 2, 3], "f_double": [1.0, 2.0, 3.0]})
     df3 = pd.DataFrame.from_dict({"f_int": [1, 2, 3], "f_double": [1.0, 2.0, 3.0], "f_str": ["str1", None, "str3"], "f_none": [None, None, None]})
     df4 = pd.DataFrame.from_dict({"f_int": [-3, 0, 6, 4], "f_double": [-1.0, 2.0, 3.0, 2.4], "f_str": ["str4", None, "str3", "str6"], "f_none": [None, None, None, None]})
@@ -64,7 +68,7 @@ class TestRollFrameBase(unittest.TestCase):
 
     @staticmethod
     def __hash(x):
-        return int(hashlib.sha256(bytes(str(x), encoding='utf-8')).hexdigest()[:8], base=16)
+        return int(hashlib.sha256(bytes(str(x), encoding='utf-8')).hexdigest(), base=16)
 
     def test_hash(self):
         def hash_frame(task):
@@ -77,9 +81,46 @@ class TestRollFrameBase(unittest.TestCase):
                     else:
                         output_adapter.write_all(pd.DataFrame(data=None))
 
-        rf = self.ctx.load(name=self.name_2p_numeric+"_hash", namespace=self.namespace, options={"total_partitions": 1})
-        rf.put_all(self.df2)
-        rf.with_stores(hash_frame)
+                for batch in output_adapter.read_all():
+                    print(f"res batch={batch.to_pandas()}")
+
+        rf = self.ctx.load(name=self.name_2p_numeric+"_big_int", namespace=self.namespace, options={"total_partitions": 1})
+        rf.put_all(self.df1)
+        res = rf.with_stores(hash_frame)
+        rf1 = self.ctx.load(namespace=res[0][1]._store_locator._namespace, name=res[0][1]._store_locator._name)
+        print(f"hash res:{rf1.get_all().to_pandas()}")
+
+    def test_big_int(self):
+        rsa_key = RSA.generate(bits=1024, randfunc=Random.new().read)
+        # private key
+        d = rsa_key.d
+        # public key
+        n = rsa_key.n
+        e = rsa_key.e
+        from decimal import Decimal
+        def _pow_mod_op(task):
+            with create_adapter(task._inputs[0]) as input_adapter, create_adapter(task._outputs[0]) as output_adapter:
+                for batch in input_adapter.read_all():
+                    if not batch.to_pandas().empty:
+                        tmp_batch = batch.to_pandas().copy(deep=True)
+                        new_batch = tmp_batch.applymap(lambda x: gmpy_math.powmod(x, e, n))
+                        print(f"new_batch={new_batch.iloc[0,0]}, type={type(new_batch.iloc[0,0])}")
+                        new_batch = new_batch.applymap(Decimal)
+                        print(f"change type={new_batch.iloc[0,0]}, type={type(new_batch.iloc[0,0])}")
+                        output_adapter.write_all([new_batch])
+                    else:
+                        output_adapter.write_all(pd.DataFrame(data=None))
+                return task._outputs[0]
+
+        rand_df = pd.DataFrame.from_dict(
+            {"random": np.random.randint(
+                2, 128 - 1, size=(1, 4), dtype=np.int64).
+                tolist()[0]})
+        rf2 = self.ctx.load(name=self.name_2p_numeric+"_big_int_1p", namespace=self.namespace, options={"total_partitions": 1})
+        rf2.put_all(rand_df)
+        res = rf2.with_stores(_pow_mod_op)
+        print(self.ctx.load(namespace=res[0][1]._store_locator._namespace,
+                            name=res[0][1]._store_locator._name).get_all().to_pandas())
 
     def test_mul(self):
         df1 = pd.DataFrame.from_dict({"f_int": [1, 2, 3], "f_double": [1.0, 2.0, 3.0]})
