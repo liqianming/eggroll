@@ -13,12 +13,17 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 
+from copy import deepcopy
+from threading import Lock
+
 from eggroll.core.base_model import RpcMessage
 from eggroll.core.proto import meta_pb2
 from eggroll.core.utils import _map_and_listify, _repr_list, _repr_bytes, \
     _elements_to_proto, _to_proto, _from_proto, _stringify_dict
+from eggroll.core.utils import time_now_ns
 
-DEFAULT_DELIM = '/'
+DEFAULT_PATH_DELIM = '/'
+DEFAULT_FORK_DELIM = '_'
 
 
 class ErEndpoint(RpcMessage):
@@ -260,7 +265,7 @@ class ErProcessorBatch(RpcMessage):
 
 
 class ErFunctor(RpcMessage):
-    def __init__(self, name='', serdes='', body=b'', options: dict = {}):
+    def __init__(self, name='', serdes='', body=b'', options: dict = None):
         if options is None:
             options = {}
         self._name = name
@@ -343,6 +348,8 @@ class ErPairBatch(RpcMessage):
 
 
 class ErStoreLocator(RpcMessage):
+    seq = 0
+    seq_lock = Lock()
     def __init__(self, id=-1, store_type: str = '', namespace: str = '', name: str = '',
             path: str = '', total_partitions=0, partitioner: str = '', serdes: str = ''):
         self._id = id
@@ -378,10 +385,20 @@ class ErStoreLocator(RpcMessage):
                               partitioner=pb_message.partitioner,
                               serdes=pb_message.serdes)
 
-    def to_path(self, delim=DEFAULT_DELIM):
+    def to_path(self, delim=DEFAULT_PATH_DELIM):
         if not self._path:
             delim.join([self._store_type, self._namespace, self._name])
         return self._path
+
+    def fork(self, postfix='', delim=DEFAULT_FORK_DELIM):
+        duplicate = deepcopy(self)
+        prefix = duplicate._name[:duplicate._name.rfind(delim)]
+        with self.seq_lock:
+            self.seq += 1
+            final_postfix = postfix if postfix else f'{time_now_ns()}.{self.seq}'
+
+        duplicate._name = f'{prefix}{delim}{final_postfix}'
+        return duplicate
 
     def __repr__(self):
         return f'<ErStoreLocator(id={self._id}, store_type={self._store_type}, namespace={self._namespace}, name={self._name}, path={self._path}, total_partitions={self._total_partitions}, partitioner={self._partitioner}, serdes={self._serdes}) at {hex(id(self))}>'
@@ -389,15 +406,17 @@ class ErStoreLocator(RpcMessage):
 
 class ErPartition(RpcMessage):
     def __init__(self, id: int, store_locator: ErStoreLocator,
-            processor: ErProcessor=None):
+            processor: ErProcessor=None, rank_in_node=-1):
         self._id = id
         self._store_locator = store_locator
         self._processor = processor
+        self._rank_in_node = rank_in_node
 
     def to_proto(self):
         return meta_pb2.Partition(id=self._id,
                                   storeLocator=self._store_locator.to_proto() if self._store_locator else None,
-                                  processor=self._processor.to_proto() if self._processor else None)
+                                  processor=self._processor.to_proto() if self._processor else None,
+                                  rankInNode=self._rank_in_node)
 
     def to_proto_string(self):
         return self.to_proto().SerializeToString()
@@ -407,16 +426,18 @@ class ErPartition(RpcMessage):
         return ErPartition(id=pb_message.id,
                            store_locator=ErStoreLocator.from_proto(
                                    pb_message.storeLocator),
-                           processor=ErProcessor.from_proto(pb_message.processor))
+                           processor=ErProcessor.from_proto(pb_message.processor),
+                           rank_in_node=pb_message.rankInNode)
 
-    def to_path(self, delim=DEFAULT_DELIM):
-        return DEFAULT_DELIM.join([self._store_locator.to_path(delim=delim), self._id])
+    def to_path(self, delim=DEFAULT_PATH_DELIM):
+        return DEFAULT_PATH_DELIM.join([self._store_locator.to_path(delim=delim), self._id])
 
     def __repr__(self):
         return f'<ErPartition(' \
                f'id={repr(self._id)}, ' \
                f'store_locator={repr(self._store_locator)}, ' \
-               f'processor={repr(self._processor)}) ' \
+               f'processor={repr(self._processor)}, ' \
+               f'rank_in_node={repr(self._rank_in_node)}) ' \
                f'at {hex(id(self))}>'
 
 
@@ -438,7 +459,7 @@ class ErStore(RpcMessage):
     def to_proto_string(self):
         return self.to_proto().SerializeToString()
 
-    def to_path(self, delim=DEFAULT_DELIM):
+    def to_path(self, delim=DEFAULT_PATH_DELIM):
         return self._store_locator.to_path(delim)
 
     @staticmethod
@@ -453,6 +474,17 @@ class ErStore(RpcMessage):
         pb_message = meta_pb2.Store()
         msg_len = pb_message.ParseFromString(pb_string)
         return ErStore.from_proto(pb_message)
+
+    def fork(self, postfix='', delim=DEFAULT_FORK_DELIM):
+        final_store_locator = self._store_locator.fork(postfix, delim)
+        final_partitions = map(
+                lambda p: ErPartition(id=-1,
+                                      store_locator=final_store_locator,
+                                      processor=p._processor),
+                self._partitions)
+        return ErStore(store_locator=final_store_locator,
+                       partitions=list(final_partitions),
+                       options=self._options)
 
     def __str__(self):
         return f'<ErStore(' \

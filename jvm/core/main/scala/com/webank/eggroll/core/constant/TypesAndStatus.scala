@@ -33,6 +33,7 @@ object SerdesTypes {
   val PICKLE = "PICKLE"
   val PROTOBUF = "PROTOBUF"
   val CLOUD_PICKLE = "CLOUD_PICKLE"
+  val EMPTY = "EMPTY"
 }
 
 object StoreStatus {
@@ -53,6 +54,7 @@ object TransferStatus {
 object ProcessorTypes {
   val ROLL_PAIR = "roll_pair"
   val ROLL_PAILLIER_TENSOR = "roll_paillier_tensor"
+  val EGG_FRAME = "egg_frame"
   val ROLL_FRAME = "roll_frame"
 
   val ROLL_PAIR_MASTER = "roll_pair_master"

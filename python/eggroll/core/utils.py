@@ -17,7 +17,6 @@ import json
 import os
 import time
 import traceback
-import uuid
 from datetime import datetime
 
 import numba
@@ -170,6 +169,11 @@ def time_now(format: str = DEFAULT_DATETIME_FORMAT):
     else:
         return formatted
 
+
+def time_now_ns(format: str = DEFAULT_DATETIME_FORMAT):
+    return datetime.now().strftime(format)
+
+
 def get_self_ip():
     import socket
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -186,7 +190,7 @@ def get_self_ip():
 
 # TODO:0: replace uuid with simpler human friendly solution
 def generate_job_id(session_id, tag='', delim='-'):
-    result = delim.join([session_id, 'py', 'job', str(uuid.uuid1())])
+    result = delim.join([session_id, 'py', 'job', time_now_ns()])
     if not tag:
         return result
     else:
@@ -221,3 +225,22 @@ def to_one_line_string(msg, as_one_line=True):
     if isinstance(msg, str) or isinstance(msg, bytes):
         return msg
     return MessageToString(msg, as_one_line=as_one_line)
+
+
+_eggroll_home = None
+def get_eggroll_home():
+    global _eggroll_home
+    if not _eggroll_home:
+        _eggroll_home = os.getenv("EGGROLL_HOME", os.path.realpath(f'{__file__}/../../../..'))
+    return _eggroll_home
+
+
+_eggroll_bin_truncate_limit = None
+def get_eggroll_bin_truncate_limit():
+    global _eggroll_bin_truncate_limit
+    if not _eggroll_bin_truncate_limit:
+        _eggroll_bin_truncate_limit = os.getenv("EGGROLL_BIN_TRUNCATE_LIMIT", 0)
+        if _eggroll_bin_truncate_limit <= 0:
+            _eggroll_bin_truncate_limit = 300
+
+    return _eggroll_bin_truncate_limit

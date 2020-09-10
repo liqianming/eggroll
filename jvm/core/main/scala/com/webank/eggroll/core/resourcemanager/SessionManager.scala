@@ -91,17 +91,30 @@ class SessionManagerService extends SessionManager with Logging {
     serverNodes.foreach(n => serverNodesToHost += (n.id -> n.endpoint.host))
 
     val eggsPerNode = sessionMeta.options.getOrElse(SessionConfKeys.CONFKEY_SESSION_PROCESSORS_PER_NODE, StaticErConf.getString(SessionConfKeys.CONFKEY_SESSION_PROCESSORS_PER_NODE, "1")).toInt
-    val processorPlan = Array(ErProcessor(
-      serverNodeId = serverNodes.head.id,
-      processorType = ProcessorTypes.ROLL_PAIR_MASTER,
-      commandEndpoint = ErEndpoint(serverNodesToHost(serverNodes.head.id), 0),
-      status = ProcessorStatus.NEW)) ++
-      serverNodes.flatMap(n => (0 until eggsPerNode).map(_ => ErProcessor(
+    // TODO:1: use constants instead of processor_types,processor_plan,uniform
+    val processorPlan =
+      if(sessionMeta.options.contains("processor_types")) {
+        val processor_types = sessionMeta.options("processor_types").split(",")
+        processor_types.flatMap { pType =>
+          val planStrategy = sessionMeta.options("processor_plan." + pType)
+          require(planStrategy == "uniform", s"unsupported:${planStrategy}")
+          serverNodes.flatMap(n =>
+            (0 until eggsPerNode).map(_ => ErProcessor(
+              serverNodeId = n.id,
+              processorType = pType,
+              status = ProcessorStatus.NEW)
+            )
+          )
+        }
+      } else {
+        serverNodes.flatMap(n => (0 until eggsPerNode).map(_ => ErProcessor(
           serverNodeId = n.id,
           processorType = ProcessorTypes.EGG_PAIR,
           commandEndpoint = ErEndpoint(serverNodesToHost(n.id), 0),
           status = ProcessorStatus.NEW)))
-    val expectedProcessorsCount = 1 + healthyCluster.serverNodes.length * eggsPerNode
+      }
+
+    val expectedProcessorsCount = processorPlan.length
     val sessionMetaWithProcessors = sessionMeta.copy(
       processors = processorPlan,
       totalProcCount = expectedProcessorsCount,
@@ -143,8 +156,8 @@ class SessionManagerService extends SessionManager with Logging {
       if (curDetails.activeProcCount < expectedProcessorsCount) {
         val actives = ListBuffer[Long]()
         val inactives = ListBuffer[Long]()
-        val activesPerNode = mutable.TreeMap[String, Int]()
-        val inactivesToNode = mutable.TreeMap[Long, String]()
+        val activesPerNode = mutable.Map[String, Int]()
+        val inactivesToNode = mutable.Map[Long, String]()
 
         serverNodes.foreach(n => activesPerNode += (n.endpoint.host -> 0))
 
@@ -193,7 +206,7 @@ class SessionManagerService extends SessionManager with Logging {
     breakable {
       while (System.currentTimeMillis() <= startTimeout) {
         result = smDao.getSession(sessionMeta.id)
-        if (result != null && !result.status.equals(SessionStatus.NEW)) {
+        if (result != null && !result.status.equals(SessionStatus.NEW) && !StringUtils.isBlank(result.id)) {
           break()
         } else {
           Thread.sleep(100)

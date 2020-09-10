@@ -2,7 +2,7 @@ package com.webank.eggroll.core.resourcemanager
 
 import java.io.File
 
-import com.webank.eggroll.core.Bootstrap
+import com.webank.eggroll.core.BootstrapBase
 import com.webank.eggroll.core.command.{CommandRouter, CommandService}
 import com.webank.eggroll.core.constant.{CoreConfKeys, NodeManagerCommands, NodeManagerConfKeys, ResourceManagerConfKeys}
 import com.webank.eggroll.core.meta.{ErProcessor, ErSessionMeta}
@@ -10,7 +10,7 @@ import com.webank.eggroll.core.session.StaticErConf
 import com.webank.eggroll.core.transfer.GrpcServerUtils
 import com.webank.eggroll.core.util.{CommandArgsUtils, Logging}
 
-class NodeManagerBootstrap extends Bootstrap with Logging {
+class NodeManagerBootstrap extends BootstrapBase with Logging {
   private var port = 0
   private var confPath = ""
   override def init(args: Array[String]): Unit = {
@@ -41,6 +41,7 @@ class NodeManagerBootstrap extends Bootstrap with Logging {
     val cmd = CommandArgsUtils.parseArgs(args = args)
 
     this.confPath = cmd.getOptionValue('c', "./jvm/core/main/resources/cluster-manager.properties")
+
     // val sessionId = cmd.getOptionValue('s')
     StaticErConf.addProperties(confPath)
     val confFile = new File(confPath)
@@ -55,6 +56,12 @@ class NodeManagerBootstrap extends Bootstrap with Logging {
   }
 
   override def start(): Unit = {
+    var port = StaticErConf.getPort()
+    if (port < 0) {
+      port = 0
+    }
+
+    StaticErConf.addProperty(NodeManagerConfKeys.CONFKEY_NODE_MANAGER_PORT, port.toString)
     val server = GrpcServerUtils.createServer(
       port = this.port, grpcServices = List(new CommandService))
 
